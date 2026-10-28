@@ -1,0 +1,100 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Surplus PV · Tableau de bord</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script><script src="./chart.js" defer></script><script src="./history.js" defer></script><script src="./dashboard.js" defer></script></head><body><main class="app dashboard"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header>
+<div class="notice"><span class="mode">Diagnostic & simulation</span><span>Aucune commande physique · température boiler fictive</span><span id="poll-text" role="status">Connexion…</span><span id="poll-dot" class="statusdot"></span></div>
+<div class="overview"><section class="panel" id="entrees"><div class="section-heading"><span class="step">1</span><h2>Entrées</h2><small>Sources et hypothèses</small></div><div id="page-inputs"> <details class="card" id="card-grid"><summary><span class="leading" data-icon="grid" aria-hidden="true"></span><span class="card-body"><span class="card-title">gPlugK Pi / Po</span><div class="card-sub">Mesure réseau en temps réel</div><span class="tag" id="grid-tag">Vérification…</span><div class="at-glance" id="grid-headline">— W</div><div class="card-meta" id="grid-meta">Pi = achat · Po = injection</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><dl><dt>Importation Pi</dt><dd id="g-pi">—</dd><dt>Injection Po</dt><dd id="g-po">—</dd><dt>Bilan réseau signé</dt><dd id="g-grid">—</dd></dl>
+ <p id="g-fresh">En attente du diagnostic.</p><p class="note">Communication confirmée si Pi OU Po présente un rapport récent. Une valeur zéro peut rester inchangée.</p></div></details>
+
+ <details class="card" id="card-solar"><summary><span class="leading" data-icon="solar" aria-hidden="true"></span><span class="card-body"><span class="card-title">Forecast.Solar</span><div class="card-sub">Prévisions PV aujourd’hui et demain</div><span class="tag" id="pv-tag">Vérification…</span><div class="at-glance" id="pv-headline">Aujourd’hui — · demain —</div><div class="card-meta">Production prévue en kWh (non mesurée)</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><dl><dt>PV restant aujourd’hui</dt><dd id="pv-today">—</dd><dt>PV prévu demain</dt><dd id="pv-tomorrow">—</dd></dl>
+ <p id="pv-message">En attente des prévisions.</p><p class="note">Production prévue brute, pas surplus garanti après consommation.</p></div></details>
+
+ <details class="card" id="card-weather"><summary><span class="leading" data-icon="weather" aria-hidden="true"></span><span class="card-body"><span class="card-title">Open-Meteo</span><div class="card-sub">Météo — <span id="weather-entity">weather.maison</span></div><span class="tag" id="meteo-tag">Vérification…</span><div class="at-glance" id="weather-headline">Actuelle — °C · demain — °C</div><div class="card-meta" id="weather-meta">Température actuelle mesurée par Home Assistant et prévision pour demain</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><dl><dt>Température actuelle</dt><dd id="meteo-current">—</dd><dt>Température moyenne prévue demain</dt><dd id="meteo-temp">—</dd><dt>Source de prévision</dt><dd id="meteo-method">—</dd></dl>
+ <p id="meteo-message">En attente de la source météo.</p><p class="note">Actuelle : état de weather.maison ; demain : moyenne des prévisions horaires ou approximation min/max, non une mesure.</p></div></details>
+
+ <details class="card" id="card-settings"><summary><span class="leading" data-icon="settings" aria-hidden="true"></span><span class="card-body">
+ <span class="card-title">Paramètres utilisateur</span><div class="card-sub">Réglages de la stratégie</div>
+ <div class="at-glance" id="settings-headline">Min — °C · Max — °C</div><div class="card-meta" id="settings-summary">Réserves et hypothèses : lecture…</div><div class="pillwrap"><span class="mini-pill">T° mini</span><span class="mini-pill">T° maxi</span><span class="mini-pill">Heure de confort</span><span class="mini-pill">Météo ON/OFF</span><span class="mini-pill">PAC ON/OFF</span><span class="mini-pill">Appoint autorisé</span></div>
+ </span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><form id="user-settings-form" class="user-form">
+ <label>Consigne maximale (°C)<input id="user-max" type="number" min="40" max="80" step="1" required></label>
+ <label>Température minimale / de confort (°C)<input id="user-min" type="number" min="30" max="80" step="1" required></label>
+ <label>Heure d'atteinte du confort (Europe/Zurich)<input id="user-time" type="time" required></label>
+ <label class="user-switch"><input id="user-weather" type="checkbox"> Activer la stratégie météo</label>
+ <label class="user-switch"><input id="user-pac" type="checkbox"> Prendre en compte la consommation de la PAC</label>
+ <label class="user-switch"><input id="user-backup" type="checkbox"> Autoriser l’appoint réseau pour le minimum de confort (simulation)</label>
+ <p class="note">Ces valeurs pilotent la planification simulée. Le surplus solaire est prioritaire ; l’appoint réseau, désactivé par défaut, est limité au minimum de confort. Le maximum reste un plafond. Aucune commande réelle du boiler.</p>
+ <button id="user-save" type="submit">Enregistrer les paramètres</button><p id="user-save-status" role="status" aria-live="polite">Paramètres enregistrés dans le diagnostic lors de la sauvegarde.</p>
+ </form>
+ <dl><dt>Réserve réseau</dt><dd id="setting-reserve">—</dd><dt>Réserve batterie demain</dt><dd id="setting-battery">—</dd><dt>Maison aujourd’hui / demain</dt><dd id="setting-house">—</dd><dt>Réserve autres usages</dt><dd id="setting-extra">—</dd><dt>Heure enregistrée</dt><dd id="setting-time">—</dd></dl>
+ <p class="note">Les réglages sont conservés dans l’application de test. L’identifiant Forecast.Solar et les hypothèses thermiques se règlent dans Home Assistant → Application Surplus PV → Configuration. L’identifiant déjà enregistré est conservé lors de la migration.</p></div></details>
+
+ <details class="card" id="card-pac"><summary><span class="leading" data-icon="pac" aria-hidden="true"></span><span class="card-body"><span class="card-title">PAC — estimation</span><div class="card-sub">Consommation estimée selon la température</div><span class="tag warn" id="pac-tag">Simulation</span><div class="at-glance" id="pac-headline">Restant aujourd’hui — kWh · demain — kWh</div><div class="card-meta">Aucune commande physique</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><dl><dt>Consommation restante estimée aujourd’hui</dt><dd id="pac-today">—</dd><dt>Consommation prévue demain</dt><dd id="pac-kwh">—</dd><dt>COP supposé</dt><dd id="pac-cop">—</dd><dt>Référence à 7 °C</dt><dd id="pac-reference">—</dd></dl>
+ <p id="pac-message">Modèle simplifié, non étalonné.</p><p class="note">La PAC est déjà comprise dans la mesure instantanée gPlugK. Sa consommation n’est déduite que des prévisions futures, sans double comptage.</p></div></details>
+
+</div><button id="expand-all" class="secondary">Voir les détails des entrées</button></section>
+<section class="panel calculation" id="calcul"><div class="section-heading"><span class="step">2</span><h2>Calcul</h2><small>Calcul actuel · simulation</small></div>
+<p class="formula-title">Surplus futur estimé = <span class="muted">· bilan de demain en kWh</span></p><div class="formula"><div class="formula-term solar"><small>PV prévu</small><strong id="calc-pv">—</strong></div><span>−</span><div class="formula-term house"><small>Maison supposée</small><strong id="calc-house">—</strong></div><span>−</span><div class="formula-term pac"><small>PAC estimée</small><strong id="calc-pac">—</strong></div><span>−</span><div class="formula-term battery"><small>Réserve batterie</small><strong id="calc-battery">—</strong></div></div>
+<div class="result"><span>Surplus disponible estimé demain</span><strong id="calc-surplus">—</strong></div><p class="muted" id="calc-note">Lecture du bilan…</p>
+<div class="flow"><article class="flow-card teal"><span data-icon="boiler"></span><h3>Consigne boiler dynamique</h3><strong id="calc-target">—</strong><p id="calc-target-state">Lecture…</p><small>Plafond autorisé ; le confort est planifié séparément. Température et chauffe simulées.</small></article><span class="flow-arrow" aria-hidden="true">→</span><article class="flow-card orange"><span data-icon="pac"></span><h3>Puissance de chauffe modulée</h3><strong id="calc-heat">—</strong><p id="calc-heat-state">Calcul instantané virtuel</p><small>Budget disponible et plan de chauffe distingués sur le graphique. Aucune commande physique.</small></article><span class="flow-arrow" aria-hidden="true">→</span><article class="flow-card rose"><span data-icon="shield"></span><h3>Autorisation réseau et sécurités</h3><strong id="calc-protection">—</strong><p id="calc-reserve">Réserve…</p><small>Le gPlugK réel reste la référence. Repli si mesure inexploitable.</small></article></div>
+<p id="calc-decision" class="decision">Lecture de la stratégie…</p>
+<section class="comfort-plan" aria-labelledby="comfort-heading"><div class="section-heading"><h3 id="comfort-heading">Planification du confort</h3><span class="tag" id="comfort-status" role="status">En attente</span></div>
+<p id="comfort-reason" class="decision">Aucun plan reçu.</p>
+<dl class="comfort-metrics"><div><dt>Échéance · heure suisse</dt><dd id="comfort-deadline">—</dd></div><div><dt>Dernier départ prudent</dt><dd id="comfort-start">—</dd></div><div><dt>Besoin thermique estimé</dt><dd id="comfort-need">—</dd></div><div><dt>Surplus prévu avant l’échéance</dt><dd id="comfort-solar">—</dd></div><div><dt>Complément réseau estimé</dt><dd id="comfort-backup-energy">—</dd></div><div><dt>Puissance totale en mode appoint (simulée)</dt><dd id="comfort-backup-power">—</dd></div></dl>
+<p id="comfort-feasibility" class="muted">Faisabilité non évaluée.</p><p id="comfort-forecast" class="muted">Couverture des prévisions non évaluée.</p>
+<p class="note">Modèle thermique avec hypothèses : la prévision ne garantit pas l’eau chaude. La consigne effective reste soumise aux mesures valides et aux limites thermiques. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p></section><a class="button secondary" href="./diagnostic#strategy">Stratégie et diagnostic détaillés →</a></section></div>
+<section class="panel" id="profil"><div class="section-heading"><span class="step">3</span><h2>Profil sur 48 heures</h2><small>Historique réel + prévisions</small></div>
+<div class="chart-controls"><button id="history-prev">← 1 jour</button><button id="history-now">Maintenant</button><button id="history-next">1 jour →</button><label>Fin de période <input type="date" id="history-day"></label><label>Vue <select id="chart-range"><option value="all">48 h passées + 48 h futures</option><option value="past">48 h d’historique</option><option value="future">48 h de prévisions</option></select></label></div>
+<p id="history-window" class="muted"></p><p id="forecast-snapshot" class="muted"></p>
+<div class="chart-controls"><div class="zoom-buttons" aria-label="Zoom du graphique"><button id="history-out" aria-label="Dézoomer">−</button><button id="history-in" aria-label="Zoomer">+</button><button id="history-reset">Réinitialiser</button></div><span id="history-scale" class="muted">100 %</span><button id="forecast-view-live">Prévision actuelle</button></div>
+<div class="chart-frame"><canvas id="axis-power" class="chart-axis" aria-label="Puissance en kW, zéro signé"></canvas><div id="viewport-power" class="chart-viewport" tabindex="0" aria-label="Graphique : défilement horizontal, zoom à deux doigts, flèches pour sélectionner un point"><canvas id="chart-power" role="img" aria-label="Mesures et prévisions, valeurs accessibles dans le tableau sous le graphique"></canvas></div><canvas id="axis-temp" class="chart-axis" aria-label="Température extérieure en degrés Celsius"></canvas><canvas id="axis-target" class="chart-axis" aria-label="Température projetée et consigne boiler en degrés Celsius" hidden></canvas></div>
+<div id="chart-legend" class="series-legend" aria-label="Afficher ou masquer les séries"></div><div id="chart-tooltip" class="point-detail" aria-live="polite">Touchez une courbe pour consulter ses valeurs exactes.</div>
+<p class="muted">Réseau : + achat / − injection. Traits pleins : mesures ; tirets : prévisions ; pointillés : estimations ou simulation. Les axes restent fixes pendant le défilement.</p>
+<p id="history-status" class="muted" role="status"></p><p id="history-count" class="muted"></p><p id="source-note" class="muted"></p>
+<details><summary>Valeurs du graphique (tableau accessible)</summary><div class="table-scroll"><table id="chart-table"><thead><tr><th>Horodatage suisse</th><th>Série et nature</th><th>Valeur</th></tr></thead><tbody></tbody></table></div><p class="muted">Points du graphique sélectionné ; l’export CSV conserve toutes les mesures originales.</p></details>
+<details class="exports" id="historic"><summary>Historique et exports</summary><div class="preview"><h3>Archives et journaux</h3>
+<p>Les 48 dernières heures restent dans la base active ; les données antérieures sont archivées et restent consultables. Les logs techniques sont conservés 7 jours.</p>
+<div class="chart-controls">
+<select id="archive-day" aria-label="Sélectionner une date archivée" style="background:var(--input-bg);color:var(--ink);border:1px solid var(--border-ui);padding:10px;border-radius:9px;min-height:44px"><option value="">Jour archivé (UTC)…</option></select>
+<button type="button" id="archive-open" class="secondary" style="width:auto;padding:8px">Consulter</button>
+<button type="button" id="archive-download" class="secondary" style="width:auto;padding:8px">CSV</button>
+</div>
+<p id="archive-status" class="screen-sub">Recherche d'archives…</p>
+<section class="preview" style="margin-top:14px;border:1px solid var(--border-ui);background:var(--panel-soft)">
+<h3>Exporter l'historique vers Excel</h3>
+<p>Export des données enregistrées sans réduction du nombre de points. Pour le réseau, il comprend les 48 h récentes <strong>et les données archivées</strong>, avec la date, l'heure suisse, le réseau signé, l'achat, l'injection, les défauts et la chauffe virtuelle.</p>
+<div class="chart-controls" aria-label="Périodes d'exportation">
+<button type="button" class="secondary" id="csv-48h" style="width:auto;padding:9px">48 dernières heures</button>
+<button type="button" class="secondary" id="csv-7d" style="width:auto;padding:9px">7 derniers jours</button>
+</div>
+<div class="chart-controls" style="align-items:end">
+<label for="csv-from" style="display:grid;gap:5px;font-size:12px;flex:1;min-width:120px">Du (jour suisse)
+<input type="date" id="csv-from" style="min-height:44px;padding:7px;border-radius:9px;background:var(--input-bg);color:var(--ink);border:1px solid var(--border-ui)"></label>
+<label for="csv-to" style="display:grid;gap:5px;font-size:12px;flex:1;min-width:120px">Au (inclus)
+<input type="date" id="csv-to" style="min-height:44px;padding:7px;border-radius:9px;background:var(--input-bg);color:var(--ink);border:1px solid var(--border-ui)"></label>
+</div>
+<div class="chart-controls">
+<label for="csv-dataset" class="screen-sub">Données</label>
+<select id="csv-dataset" aria-label="Données historiques à exporter" style="padding:9px;min-height:44px;max-width:100%;background:var(--input-bg);color:var(--ink);border:1px solid var(--border-ui);border-radius:9px">
+<option value="network">Réseau réel et chauffe virtuelle</option>
+<option value="forecasts">Prévisions PV / météo / PAC archivées</option>
+<option value="logs">Logs techniques (7 jours)</option>
+</select>
+</div><div class="chart-controls">
+<label for="csv-format" class="screen-sub">Format</label>
+<select id="csv-format" aria-label="Format du fichier CSV" style="padding:9px;min-height:44px;max-width:100%;background:var(--input-bg);color:var(--ink);border:1px solid var(--border-ui);border-radius:9px">
+<option value="excel">Excel CH (séparateur ;, décimales ,)</option>
+<option value="standard">CSV standard (séparateur ,, décimales .)</option>
+</select>
+</div>
+<button type="button" class="primary" id="csv-custom" style="width:100%">Télécharger la période sélectionnée (CSV)</button>
+<p id="csv-export-info" class="screen-sub" aria-live="polite">Période maximale : 31 jours par export. Les périodes sans mesures restent vides.</p>
+<p class="screen-sub">Excel : ouvrir le CSV directement ou utiliser <strong>Données → À partir d'un fichier texte/CSV</strong>. Les puissances signées sont numériques ; une injection correspond à une valeur négative. Les colonnes de chauffe sont des simulations.</p>
+</section>
+<button type="button" id="history-logs" class="secondary">Afficher / masquer les logs (7 jours)</button>
+<pre id="logs-view" hidden style="overflow:auto;white-space:pre-wrap;color:var(--ink);font-size:11px;max-height:320px"></pre>
+</div>
+</details></section>
+<section class="panel" id="repli"><div class="section-heading"><span class="step">4</span><h2>Logique de repli</h2><small>État réel des conditions</small></div><div class="fallback-grid"><article><span data-icon="solar"></span><div><h3>Forecast.Solar indisponible</h3><strong id="fallback-pv">Vérification…</strong><p>Repli sur le surplus mesuré et le plafond manuel. Le calcul de confort conserve un départ prudent, sans compter d’énergie solaire inconnue.</p></div></article><article><span data-icon="weather"></span><div><h3>Température météo indisponible</h3><strong id="fallback-weather">Vérification…</strong><p>PAC activée mais inconnue : prévision de surplus indisponible. PAC désactivée : exclusion explicite du modèle, sans nouvelle déduction au compteur.</p></div></article><article><span data-icon="shield"></span><div><h3>Surplus réseau insuffisant</h3><strong id="fallback-grid">Vérification…</strong><p>Réduction de la chauffe sur surplus. Un appoint simulé n’est permis que s’il est autorisé et nécessaire au minimum de confort ; un défaut de mesure inhibe la chauffe.</p></div></article></div></section>
+<footer>Diagnostic uniquement · CELDUC, DAC, relais, watchdog et éléments chauffants non commandés.</footer></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Entrées</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./diagnostic" class="nav-button">Diagnostic</a></nav></body></html>

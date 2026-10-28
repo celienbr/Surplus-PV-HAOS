@@ -1,0 +1,36 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Boiler</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header><section class="panel"><div class="section-heading"><span data-icon="boiler"></span><h2>Boiler virtuel</h2></div><p class="notice">Température selon la source indiquée · puissance simulée · aucune sortie physique</p><div class="boiler-kpis"><article class="kpi"><small>Réseau réel signé</small><strong id="k-grid">—</strong></article><article class="kpi"><small>Chauffe virtuelle</small><strong id="k-heat">—</strong></article><article class="kpi"><small>Réseau avec chauffe virtuelle</small><strong id="k-after">—</strong></article><article class="kpi"><small id="water-source-label">Température non validée</small><strong id="k-temp">—</strong></article></div><div class="boiler-status"><span data-icon="boiler"></span><div><h3>Température et consigne</h3><p><strong id="demo-temp">—</strong> → plafond <strong id="target-temp">—</strong></p><div class="thermal-track"><div id="thermal-fill" class="thermal-fill"></div></div><p id="heat-state"></p><p>Limites configurées : <span id="boiler-limits">—</span></p></div></div><div class="decision"><strong id="grid-health">Connexion…</strong><p id="grid-detail"></p></div><div class="chart-controls"><button id="view-history" class="primary">Graphique unifié et historique</button><button id="view-strategy">Stratégie météo</button><button id="advanced">Diagnostic détaillé</button></div><div class="decision"><strong id="comfort-state">Planification du confort en attente</strong><p id="comfort-details"></p></div><p class="muted">Planification simulée : aucune commande électrique raccordée. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p><p class="statusline"><span id="conn-dot"></span><span id="conn-text" role="status"></span></p></section></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Entrées</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./diagnostic" class="nav-button">Diagnostic</a></nav><script>
+"use strict";
+const $=id=>document.getElementById(id);
+const good=n=>typeof n==="number"&&Number.isFinite(n);
+const watts=n=>good(n)?Math.round(n).toLocaleString("fr-CH")+" W":"—";
+const deg=n=>good(n)?n.toLocaleString("fr-CH",{maximumFractionDigits:1})+" °C":"—";
+async function refresh(){
+ try{
+  const r=await fetch("./api/status",{cache:"no-store"});if(!r.ok)throw Error("HTTP "+r.status);
+  const p=await r.json(),o=p.options||{},w=p.weather||{};document.body.classList.remove("disconnected");
+  $("k-grid").textContent=watts(p.meter_w);$("k-heat").textContent=watts(p.simulated_boiler_w);
+  $("k-after").textContent=watts(p.simulated_grid_after_w);
+  $("water-source-label").textContent=p.temperature_source==="HOME_ASSISTANT"?"Température lue dans HA":"Température fictive";
+  $("k-temp").textContent=deg(p.water_temperature_c);$("demo-temp").textContent=deg(p.water_temperature_c);
+  const target=w.status==="ADAPTIVE"?w.target_c:o.demo_max_c;
+  $("target-temp").textContent=deg(target);$("boiler-limits").textContent=deg(o.weather_min_c)+" à "+deg(o.demo_max_c);
+  $("thermal-fill").style.width=Math.min(100,Math.max(0,100*(p.water_temperature_c??0)/Math.max(1,target)))+"%";
+  $("heat-state").textContent="Simulation : "+(p.simulation_state||"—")+
+   " · limite "+(w.status==="ADAPTIVE"?"météo calculée":"manuelle");
+  $("grid-health").textContent=p.communication_healthy?"● Compteur connecté":"● Compteur à vérifier";
+  $("grid-detail").textContent=p.data_quality||p.error||"Aucune mesure.";
+  $("conn-dot").className="statusdot "+(p.communication_healthy?"ok":"warn");
+  $("conn-text").textContent="Lecture seule · version "+p.version;
+  const c=p.comfort||{};
+  $("comfort-state").textContent=c.reason||"Plan de confort indisponible";
+  const instant=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}):'—';
+  $("comfort-details").textContent="Minimum à "+instant(c.deadline)+" · dernier départ prudent "+instant(c.latest_start)+" · puissance totale en mode appoint (simulée) "+watts(c.backup_power_w)+" · appoint "+(o.grid_backup_enabled?'autorisé pour le minimum':'interdit')+".";
+
+ }catch(err){document.body.classList.add("disconnected");$("conn-dot").className="statusdot bad";$("conn-text").textContent=String(err);$("comfort-state").textContent="Plan périmé : communication perdue";}
+}
+$("view-history").onclick=()=>location.href="./#profil";
+$("view-strategy").onclick=()=>location.href="./diagnostic#strategy";
+$("advanced").onclick=()=>location.href="./diagnostic";
+
+refresh();setInterval(refresh,5000);
+</script></body></html>

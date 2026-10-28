@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Surplus PV · Diagnostic</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color-scheme:dark;background:#101922;color:#edf4fa;font-size:15px}
+*{box-sizing:border-box}body{margin:0 auto;max-width:780px;padding:16px;line-height:1.4}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+h1{font-size:22px;margin:0}h2{font-size:15px;color:#d3e4ef;margin:0 0 12px}
+.sub{color:#a0b3c5;font-size:12px;margin-top:3px}.pill{border:1px solid #526a78;border-radius:18px;padding:6px 10px;font-size:12px;white-space:nowrap}
+.ok{background:#123d34;color:#a2f2d9;border-color:#368e77}.partial{background:#59481d;color:#fbe8ac;border-color:#ad8538}.bad{background:#512b26;color:#ffbdb0;border-color:#a45a4c}
+.banner{background:#26303d;border:1px solid #58677b;border-radius:11px;padding:11px 13px;margin-bottom:14px;color:#ffddb2;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.card{border:1px solid #344654;border-radius:14px;background:#192632;padding:16px;margin-bottom:11px;min-width:0}
+.card small{color:#a6becf;display:block;margin-bottom:6px}.value{font-size:clamp(25px,5vw,35px);font-weight:700;letter-spacing:-.6px}
+.unit{font-size:16px;color:#b5c8d9;font-weight:400}.dim{color:#a7bdc9;font-size:12px}.big{font-size:17px;font-weight:600}
+.divider{border-top:1px solid #344654;margin:12px 0}.status{padding:9px;background:#14242b;border-radius:7px;color:#cee4e5;overflow-wrap:anywhere;font-size:13px}
+canvas{display:block;width:100%;height:170px;max-height:170px;background:#15222c;border-radius:9px}
+.dots{display:flex;gap:12px;flex-wrap:wrap;color:#bcd2dc;font-size:12px;margin-top:6px}
+.dots span::before{content:"● ";color:#48c2a8}.dots span+span::before{color:#eac16b}
+input,button{background:#14242e;color:#fff;border:1px solid #516577;border-radius:7px;font:inherit;padding:7px}
+.nav{display:flex;gap:9px;margin:10px 0 16px}.nav button{padding:10px 16px;min-width:130px}.nav .selected{background:#285b73;border-color:#4dbad6}.split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.switch{display:flex;gap:10px;align-items:center;font-weight:600}.switch input{width:19px;height:19px}.foot{font-size:12px;color:#a4b9c8;margin:14px 0}
+@media(min-width:700px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:360px){.card{padding:11px}}
+</style>
+<link rel="stylesheet" href="./theme.css">
+<script src="./theme.js" defer></script>
+</head>
+<body>
+<header><div><h1>Surplus PV</h1><div class="sub">Diagnostic Raspberry Pi · mesures gPlugK réelles</div></div><span id="status" class="pill">Connexion…</span></header>
+<div class="banner"><strong>TEST UNIQUEMENT</strong> — Aucun pilotage du boiler, du DAC, du watchdog ou des relais. La température et la puissance de chauffe sont simulées.</div>
+<nav class="nav" aria-label="Pages">
+<button id="tab-inputs" type="button">← Entrées</button>
+<button class="selected" id="tab-monitor" type="button">Mon boiler</button>
+<button id="tab-strategy" type="button">Stratégie météo</button>
+</nav>
+<div id="page-monitor">
+<div class="grid">
+  <section class="card"><small>Réseau réel (+ achat / − injection)</small><div class="value" id="grid">— <span class="unit">W</span></div><div class="dim">gPlugK Pi − Po, exprimé en watts</div></section>
+  <section class="card"><small>Chauffe virtuelle calculée</small><div class="value" id="boiler">— <span class="unit">W</span></div><div class="dim">Aucune sortie électrique</div></section>
+  <section class="card"><small>Réseau virtuel avec cette chauffe</small><div class="value" id="after">— <span class="unit">W</span></div><div class="dim">Modèle idéal, sans étalonnage CELDUC</div></section>
+</div>
+<section class="card"><h2>Évolution des puissances</h2><a href="./#profil">Ouvrir le graphique unifié et les exports →</a></section>
+<section class="card">
+<h2>Paramètres de ce test</h2>
+<div class="grid">
+<div><small>Température chaudière fictive</small><div class="big" id="temp">—</div></div>
+<div><small>Limite thermique fictive</small><div class="big" id="max">—</div></div>
+<div><small>Injection résiduelle visée</small><div class="big" id="target">—</div></div>
+</div>
+<div class="divider"></div><div class="dim">Réglages modifiables uniquement dans l'onglet Configuration de l'application Home Assistant, puis redémarrage du test.</div>
+</section>
+<section class="card">
+<h2>État des mesures</h2>
+<div id="details" class="status">Démarrage…</div>
+<p class="dim">Source : <code>sensor.gplugk_z_pi</code> et <code>sensor.gplugk_z_po</code> (kW). Lecture seule par l'API interne de Home Assistant. Si les données sont absentes ou anciennes, la consigne virtuelle retombe à zéro et le défaut s'affiche.</p>
+</section>
+<section class="card">
+<h2>Diagnostic des deux capteurs</h2>
+<div class="grid">
+<div><small>Pi · Importation (kW)</small><div id="pi_diag" class="status">En attente…</div></div>
+<div><small>Po · Exportation (kW)</small><div id="po_diag" class="status">En attente…</div></div>
+</div>
+<p class="dim">L'âge indique le temps depuis le dernier rapport connu de Home Assistant, pas nécessairement depuis la dernière interrogation du compteur. Une mesure inchangée peut être ancienne alors que l'autre varie. Les valeurs ci-dessus sont informatives et ne servent jamais à contourner la vérification de fraîcheur.</p>
+</section>
+</div>
+<div id="page-strategy" hidden>
+<section class="card">
+<h2>Stratégie solaire · aperçu fictif</h2>
+<label class="switch"><input id="weather-enabled" type="checkbox" /> Activer l'optimisation météo dans la simulation</label>
+<p class="dim">Cet interrupteur agit uniquement dans cette application de diagnostic. Il ne modifie aucun équipement. Le choix revient à sa valeur configurée au prochain redémarrage.</p>
+<div id="weather-status" class="status">En attente des prévisions…</div>
+</section>
+<div class="split">
+ <section class="card"><small>PV restant aujourd'hui · prévision brute</small><div class="value" id="weather-today">—</div><div class="dim">kWh, avant consommation maison</div></section>
+ <section class="card"><small>PV prévu demain · prévision brute</small><div class="value" id="weather-tomorrow">—</div><div class="dim">kWh, avant consommation maison</div></section>
+ <section class="card"><small>Surplus utile demain · estimation</small><div class="value" id="weather-net">—</div><div class="dim">kWh, après maison, batterie et PAC prévue (si activée)</div></section>
+ <section class="card"><small>Température extérieure demain · prévision</small><div class="value" id="pac-outside">—</div><div class="dim" id="pac-source">Open-Meteo : en attente, ou PAC désactivée</div></section>
+ <section class="card"><small>Consommation électrique PAC demain · estimation</small><div class="value" id="pac-energy">—</div><div class="dim">kWh, modèle simplifié ajusté au froid</div></section>
+ <section class="card"><small>Consigne météo calculée</small><div class="value" id="weather-target">—</div><div class="dim">°C — plafond fictif, non mesuré</div></section>
+</div>
+<section class="card">
+<h2>Pourquoi cette température ?</h2><div id="weather-reason" class="status">En attente…</div>
+<p class="dim">Le vrai surplus instantané est mesuré par le gPlugK et inclut déjà la PAC actuelle. La prévision de demain déduit séparément la PAC si la simulation PAC est activée, en utilisant une température extérieure <strong>prévue pour demain</strong>. Les consommations maison doivent alors exclure la PAC pour éviter tout double comptage. Les paramètres de COP et de besoins thermiques sont approximatifs, pas des mesures.</p>
+</section>
+<section class="card">
+<h2>Paramètres de l'essai</h2>
+<div id="weather-parameters" class="status">En attente…</div>
+<div class="divider"></div>
+<p class="dim">La température du boiler est fictive. La planification du minimum et l’appoint réseau autorisé sont calculés en simulation ; consulter le plan de confort dans la page Entrées / Calcul et le graphique unifié.</p>
+</section>
+</div>
+<section class="card">
+<h2>Fonctions suivantes</h2>
+<p class="dim">Les prévisions Forecast.Solar peuvent maintenant être lues dans la page Stratégie. La planification horaire est simulée. La sonde DS18B20, la batterie réelle et la commande CELDUC restent non raccordées. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p>
+</section>
+<div class="foot">Actualisation de l'écran : 5 s. Les mesures gPlugK sont interrogées selon l'intervalle défini dans la configuration. Aucune donnée n'est envoyée sur Internet.</div>
+<script>
+"use strict";
+function pretty(n){return n===null||!Number.isFinite(Number(n))?"—":Math.round(n).toLocaleString("fr-CH")+" W"}
+function sensorText(s){
+ if(!s)return "Non disponible dans cette version";
+ const value=s.kw===null?"Valeur invalide":s.kw.toLocaleString("fr-CH")+" kW";
+ const age=s.age_s===null?"âge inconnu":s.age_s+" s";
+ const source=s.timestamp_source||"horodatage inconnu";
+ const updated=s.reported_at?new Date(s.reported_at).toLocaleString("fr-CH"):"non horodaté";
+ return value+" · "+age+" · "+s.health+" · source "+source+" · rapport "+updated+
+        (s.reason?" · "+s.reason:"");
+}
+let toggling=false;
+let weatherToken=null;
+function showPage(name) {
+ const monitor=name==="monitor";
+ document.getElementById("page-monitor").hidden=!monitor;
+ document.getElementById("page-strategy").hidden=monitor;
+ document.getElementById("tab-monitor").classList.toggle("selected",monitor);
+ document.getElementById("tab-strategy").classList.toggle("selected",!monitor);
+}
+document.getElementById("tab-inputs").addEventListener("click",()=>{window.location.href="./#entrees";});
+document.getElementById("tab-monitor").addEventListener("click",()=>showPage("monitor"));
+document.getElementById("tab-strategy").addEventListener("click",()=>showPage("strategy"));
+document.getElementById("weather-enabled").addEventListener("change",async(e)=>{
+ if(toggling)return;
+ toggling=true;
+ try{
+  if(!weatherToken)throw new Error("Authentification du panneau non initialisée");
+  const r=await fetch("./api/weather-toggle",{
+   method:"POST",headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({enabled:e.target.checked,token:weatherToken}),cache:"no-store"
+  });
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  await update();
+ }catch(err){
+  document.getElementById("weather-status").textContent="Interrupteur non modifié : "+String(err);
+  e.target.checked=!e.target.checked;
+ }finally{toggling=false;}
+});
+function energy(val){return val===null||!Number.isFinite(Number(val))?"—":Number(val).toLocaleString("fr-CH",{maximumFractionDigits:2})+" kWh";}
+function weatherUpdate(weather,options){
+ if(!weather)return;
+ if(!toggling)document.getElementById("weather-enabled").checked=weather.enabled;
+ document.getElementById("weather-status").textContent=
+   "Forecast.Solar : "+(weather.pv_status||"non évalué")+
+   (weather.pv_error?" · "+weather.pv_error:"")+
+   " | PAC / Open-Meteo : "+(weather.pac_model_status||"OFF")+
+   (weather.pac_error?" · "+weather.pac_error:"")+
+   (weather.error&&!weather.pv_error&&!weather.pac_error?
+      " · "+weather.error:"");
+ document.getElementById("weather-today").textContent=energy(weather.gross_today_remaining_kwh);
+ document.getElementById("weather-tomorrow").textContent=energy(weather.gross_tomorrow_kwh);
+ document.getElementById("weather-net").textContent=energy(weather.usable_tomorrow_assumed_kwh);
+ document.getElementById("pac-outside").textContent=weather.pac_outdoor_tomorrow_c===null?"—":weather.pac_outdoor_tomorrow_c+" °C";
+ document.getElementById("pac-source").textContent=(!options.pac_enabled?
+   "PAC non activée":
+   weather.pac_forecast_method==="HOURLY_MEAN"?
+    "Open-Meteo · moyenne horaire de demain ("+weather.pac_forecast_samples+" points)":
+   weather.pac_forecast_method==="DAILY_MIDPOINT_APPROX"?
+    "Open-Meteo · estimation (min + max)/2, prévisions horaires incomplètes":
+   weather.pac_forecast_method==="EXTERNAL_SENSOR"?
+    "Capteur de prévision Home Assistant configurable":
+    "Prévision indisponible · "+weather.pac_model_status+
+    (weather.pac_error?" · "+weather.pac_error:""));
+ document.getElementById("pac-energy").textContent=energy(weather.pac_electric_tomorrow_kwh);
+ document.getElementById("weather-target").textContent=weather.target_c+" °C (fictif)";
+ document.getElementById("weather-reason").textContent=weather.decision;
+ document.getElementById("weather-parameters").textContent=
+  "Minimum "+options.weather_min_c+" °C · Maximum "+options.demo_max_c+" °C · "+
+  "Besoin eau chaude demain "+options.weather_heat_demand_kwh+" kWh · "+
+  "Consommation maison estimée demain "+options.house_tomorrow_kwh+" kWh · "+
+  "Réserve batterie demain "+options.battery_tomorrow_kwh+" kWh · "+
+  "Réserve instantanée autres usages "+options.weather_reserve_w+" W · "+
+  (options.pac_enabled?
+   "PAC : estimation activée · modèle COP "+(weather.pac_cop_assumed===null?"non calculé":weather.pac_cop_assumed)+
+   " · consommation référence "+options.pac_reference_electric_kwh+" kWh/j à "+options.pac_reference_temp_c+" °C.":
+   "PAC : modélisation désactivée (non déduite du bilan).");
+}
+async function update(){
+ let label=document.getElementById("status");
+ try{
+  const res=await fetch("./api/status",{cache:"no-store"});
+  if(!res.ok)throw Error("HTTP "+res.status);
+  const p=await res.json();
+  weatherToken=typeof p.weather_toggle_token==="string"?p.weather_toggle_token:null;
+  label.textContent=p.communication_healthy?
+    (p.status==="POWER_UNKNOWN"?"Compteur connecté · bilan à vérifier":"Communication compteur OK"):
+    "Communication non confirmée";
+  label.className="pill "+(p.status==="POWER_UNKNOWN"?"partial":
+    p.communication_healthy?"ok":"bad");
+  document.getElementById("grid").textContent=pretty(p.meter_w);
+  document.getElementById("boiler").textContent=pretty(p.simulated_boiler_w);
+  document.getElementById("after").textContent=pretty(p.simulated_grid_after_w);
+  document.getElementById("temp").textContent=p.options.demo_water_c+" °C (fictif)";
+  document.getElementById("max").textContent=p.options.demo_max_c+" °C";
+  document.getElementById("target").textContent=p.options.target_export_w+" W";
+  document.getElementById("details").textContent=(
+    p.communication_healthy?
+      (p.data_quality||"Communication via Pi ou Po")+" · "+
+      (p.status==="POWER_UNKNOWN"?
+        "Bilan réseau inconnu : aucune chauffe simulée":
+        "Puissance réseau : "+pretty(p.meter_w)+
+        " · Couverture : "+(p.measurement_coverage||"inconnue")):
+      "Défaut : "+(p.error||"Inconnu")
+    )+" · Version "+p.version;
+  document.getElementById("pi_diag").textContent=sensorText(p.sensors&&p.sensors.pi);
+  document.getElementById("po_diag").textContent=sensorText(p.sensors&&p.sensors.po);
+  weatherUpdate(p.weather,p.options);
+
+ }catch(err){label.textContent="Interface indisponible";label.className="pill bad";
+  document.getElementById("details").textContent=String(err);}
+}
+if(window.location.hash==="#strategy")showPage("strategy");
+window.addEventListener("surplus-theme-change",update);
+update();setInterval(update,5000);
+</script>
+</body></html>
+
