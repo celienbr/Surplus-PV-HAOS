@@ -1,11 +1,12 @@
 # Surplus PV — Canal de distribution Home Assistant OS
 
-Distribution du logiciel de diagnostic et simulation Surplus PV 1.0.0-alpha.1.
-Ne contient ni schémas électriques, BOM, archives de développement,
-historique SQLite, fichiers de secrets ni données personnelles.
+Version 1.0.0-alpha.2 — diagnostic et simulation ARM64, aucune commande physique.
+Inclut le tableau de bord Énergie (gPlugK, jour/mois/année).
+Dépôt : https://github.com/celienbr/Surplus-PV-HAOS
 
-Ajouter l'adresse https://github.com/celienbr/Surplus-PV-HAOS dans
-Home Assistant > Paramètres > Applications > Dépôts.
+Pour une application déjà installée depuis ce dépôt, utiliser Mettre à jour
+après sauvegarde, sans réinstallation. Lire haos_diagnostic/DOCS.md pour la
+sauvegarde, les vérifications et le retour arrière. Les anciennes installations
+locales ne sont pas à migrer dans le cadre de cette livraison.
 
-Simulation uniquement, aucune commande physique.
-Les données d'une ancienne application locale ne migrent pas automatiquement.
+Ce dépôt ne contient ni schémas, BOM, archives privées, SQLite ou secrets.

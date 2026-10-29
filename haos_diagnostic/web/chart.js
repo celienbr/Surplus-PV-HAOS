@@ -33,10 +33,29 @@
    const match=zone.match(/GMT([+-])(\d+)(?::(\d+))?/);const offset=match?(match[1]==='+'?1:-1)*(Number(match[2])*60+Number(match[3]||0))*60000:0;instant=utc-offset;}
   return instant;
  }
+ function energySeries(data){
+  const day=data.period==='day',unit=day?'kW':'kWh';
+  const rows=day?data.points:data.buckets;
+  const specs=day?[
+   ['grid','grid_w','Réseau (+ import / − export)','network'],
+   ['pv_actual','pv_actual_w','Production PV réelle','solar'],
+   ['self_consumed','self_consumed_w','Autoconsommation PV','surplus']
+  ]:[
+   ['import','import_kwh','Import réseau','network'],
+   ['export','export_kwh','Export réseau (négatif)','heater'],
+   ['pv_actual','pv_actual_kwh','Production PV réelle','solar'],
+   ['self_consumed','self_consumed_kwh','Autoconsommation PV','surplus']
+  ];
+  return specs.map(([id,key,label,color])=>({id,label,color,unit,
+   source:id==='pv_actual'?'Sofar via HA · non disponible':id==='self_consumed'?'PV réelle − export · non disponible':data.source+(day?' · puissance mesurée':' · énergie estimée'),
+   points:rows.map(p=>({at:stamp(p),value:good(p[key])?p[key]*(day?.001:id==='export'?-1:1):null,
+     gap:p.gap_before===true,partial:p.partial===true})).filter(p=>Number.isFinite(p.at))}));
+ }
  const formatTime=t=>new Intl.DateTimeFormat('fr-CH',{timeZone:'Europe/Zurich',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'shortOffset'}).format(new Date(t));
- if(typeof module!=='undefined')module.exports={series,swissDayEnd,formatTime};
+ if(typeof module!=='undefined')module.exports={series,swissDayEnd,formatTime,energySeries};
  if(typeof document==='undefined')return;
  window.SurplusTime={swissDayEnd,formatTime};
+ window.SurplusEnergySeries=energySeries;
  const $=id=>document.getElementById(id),canvas=$('chart-power'),viewport=$('viewport-power');if(!canvas)return;
  let status=null,history=[],liveProfile={},archived=null,savedAt=null,anchor=Date.now(),isLive=true,zoom=1,selected=null,range='all';
  const visible=new Set(definitions.map(s=>s.id));let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;

@@ -26,6 +26,7 @@ from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
 from .forecast_adapter import build_weather_preview
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .history_store import HistoryStore, parse_time
+from .energy_dashboard import EnergyDashboard, live_grid
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
 INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
@@ -180,6 +181,13 @@ def parse_options(source: dict) -> dict:
         raise ValueError("Total export reserve too large")
     if options["comfort_loss_w"] >= options["max_power_w"] * options["comfort_efficiency"]:
         raise ValueError("Thermal losses must be below effective boiler power")
+    for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity'):
+        entity = source.get(key, '')
+        if not isinstance(entity, str) or (entity and (
+                not entity.startswith('sensor.') or len(entity) > 255 or
+                not all(c.isalnum() or c in '._' for c in entity))):
+            raise ValueError('Invalid PV sensor ID: ' + key)
+        options[key] = entity
     return options
 
 
@@ -234,6 +242,7 @@ class Diagnostic:
                                    else "SIMULATED_NOT_CONNECTED")
         self.client = client
         self.history_store = history_store
+        self.energy_dashboard = EnergyDashboard(history_store) if history_store else None
         self._last_logged_status = None
         self._last_comfort_label = None
         self._last_heartbeat = None
@@ -607,7 +616,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.1",
+            "version": "1.0.0-alpha.2",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": True,
             "temperature_source": self.temperature_source,
@@ -700,6 +709,9 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/boiler", "/boiler.html"):
                 body = BOILER_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
+            elif path in ('/energie', '/energy.html'):
+                body = (MOBILE_INPUTS.parent / 'energy.html').read_bytes()
+                content_type = 'text/html; charset=utf-8'
             elif path in ("/diagnostic", "/diagnostic.html"):
                 body = INDEX.read_bytes()
                 content_type = "text/html; charset=utf-8"
@@ -709,12 +721,38 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/energy.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":
                 body = HISTORY_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
+            elif path == '/api/energy':
+                if diag.energy_dashboard is None:
+                    self.send_error(503, 'Persistent history not configured')
+                    return
+                from urllib.parse import parse_qs
+                from zoneinfo import ZoneInfo
+                args = parse_qs(self.path.partition('?')[2], keep_blank_values=True)
+                try:
+                    if set(args)-{'period','date'} or any(len(v) != 1 for v in args.values()):
+                        raise ValueError('Unsupported or repeated energy parameter')
+                    period = args.get('period', ['day'])[0]
+                    selected = args.get('date', [datetime.now(ZoneInfo('Europe/Zurich')).date().isoformat()])[0]
+                    data = dict(diag.energy_dashboard.query(period, selected))
+                    with diag.lock:
+                        state = diag.snapshot()
+                    data['live'] = live_grid(state, diag.options['max_age_seconds'])
+                    data['pv_configuration'] = {k:diag.options[k] for k in (
+                        'pv_actual_power_entity','pv_actual_energy_today_entity')}
+                    body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
+                    content_type = 'application/json; charset=utf-8'
+                except (ValueError, OverflowError) as exc:
+                    self.send_error(400, str(exc)[:140])
+                    return
+                except sqlite3.Error:
+                    self.send_error(503, 'Energy history temporarily unavailable')
+                    return
             elif path in ("/api/history", "/api/archives", "/api/logs",
                               "/api/forecast-at", "/api/archive.csv"):
                 if diag.history_store is None:
