@@ -1,13 +1,14 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.2
+# Surplus PV — Home Assistant OS 1.0.0-alpha.3
 
 Application ARM64 (aarch64), diagnostic et simulation uniquement. Tableau de
 bord Énergie : réseau gPlugK, vues jour/mois/année et bilans estimés, couverture
-partielle explicite. PV réelle et autoconsommation non disponibles avant
-intégration Sofar. Prévisions Forecast.Solar séparées des mesures.
+partielle explicite. SW-004.2 ajoute l'acquisition AC Sofar optionnelle,
+les index de production et l'autoconsommation conditionnelle. Sans configuration,
+PV réelle et autoconsommation restent indisponibles. Prévisions Forecast.Solar séparées des mesures.
 Planification de confort et trajectoire 48 h conservées.
 Aucune commande physique : GPIO, I²C, DAC, CELDUC et relais non implémentés.
 
-## Mise à jour depuis 1.0.0-alpha.1 — après publication autorisée
+## Mise à jour depuis 1.0.0-alpha.2 (ou alpha.1)
 
 1. Dans Home Assistant, noter la version, le dépôt et l'identifiant exact de
    l'application installée. Conserver le dépôt et la même application.
@@ -22,19 +23,40 @@ Aucune commande physique : GPIO, I²C, DAC, CELDUC et relais non implémentés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.2, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.3, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.2, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.3, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Ouvrir Énergie : signe import/export, fraîcheur et couverture de l'historique,
    navigation jour/mois/année. PV réelle/autoconsommation doivent rester
    indisponibles sans Sofar. Aucun pilotage physique ne doit apparaître.
 
-Cette mise à jour ne modifie pas le schéma SQLite. Données persistantes :
+Les tables SQLite antérieures sont conservées. Une table PV additive est créée
+uniquement si une source PV est configurée. Données persistantes :
 /data/surplus_pv_history.sqlite3 et /data/surplus_pv_user_settings.json.
-Les deux nouvelles options PV sont facultatives et vides par défaut.
+Les options PV sont facultatives ; les trois entités sont vides par défaut.
+Pour une installation Sofar déjà vérifiée dans Home Assistant, configurer sans
+écraser les autres réglages :
+
+    pv_actual_power_entity: sensor.inverter_power
+    pv_actual_energy_today_entity: sensor.inverter_today_production
+    pv_actual_energy_total_entity: sensor.inverter_total_production
+
+Choisir la puissance AC (Power du profil sofar_g3, pas PV Power DC).
+Confirmer pv_self_consumption_topology_verified uniquement si toute la production
+AC est couverte, sans stockage ni autre flux non comptabilisé. La valeur par défaut
+reste false ; une confirmation sur une installation ne vaut pas pour les autres.
+Acquisition facultative toutes les 60 s, fraîcheur HA 120 s, réglables dans
+pv_actual_sample_seconds et pv_actual_max_age_seconds. Les mesures réseau et
+le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux réseau
+récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
+silencieusement à zéro. Les nouvelles observations sont conservées dans une table
+SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
+La publication alpha.3 a été autorisée ; la mise à jour et sa sauvegarde sont
+effectuées par le propriétaire depuis Home Assistant. Les lectures et performances
+sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.
 
 ## Retour arrière
@@ -50,5 +72,4 @@ ou désinstaller pour tenter un retour arrière. Si la restauration exige une
 intervention supplémentaire, demander une procédure adaptée avant de continuer.
 
 Le paquet ne contient ni réglage privé ni données réelles. L'absence de données
-anciennes n'est jamais comblée artificiellement. Les essais sur Pi et la
-publication nécessitent des autorisations distinctes.
+anciennes n'est jamais comblée artificiellement. Aucun essai sur Pi ni validation de mesures réelles n’est déduit des tests logiciels.

@@ -27,6 +27,7 @@ from .forecast_adapter import build_weather_preview
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .history_store import HistoryStore, parse_time
 from .energy_dashboard import EnergyDashboard, live_grid
+from .pv_actual import PVAcquisition
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
 INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
@@ -181,13 +182,22 @@ def parse_options(source: dict) -> dict:
         raise ValueError("Total export reserve too large")
     if options["comfort_loss_w"] >= options["max_power_w"] * options["comfort_efficiency"]:
         raise ValueError("Thermal losses must be below effective boiler power")
-    for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity'):
+    for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity', 'pv_actual_energy_total_entity'):
         entity = source.get(key, '')
         if not isinstance(entity, str) or (entity and (
                 not entity.startswith('sensor.') or len(entity) > 255 or
                 not all(c.isalnum() or c in '._' for c in entity))):
             raise ValueError('Invalid PV sensor ID: ' + key)
         options[key] = entity
+    options['pv_actual_max_age_seconds']=int(source.get('pv_actual_max_age_seconds',120))
+    options['pv_actual_sample_seconds']=int(source.get('pv_actual_sample_seconds',60))
+    options['pv_self_consumption_topology_verified']=source.get('pv_self_consumption_topology_verified',False)
+    if not 10<=options['pv_actual_max_age_seconds']<=900:
+        raise ValueError('Invalid PV freshness period')
+    if not 10<=options['pv_actual_sample_seconds']<=120:
+        raise ValueError('Invalid PV sample period')
+    if not isinstance(options['pv_self_consumption_topology_verified'],bool):
+        raise ValueError('PV topology confirmation must be boolean')
     return options
 
 
@@ -243,6 +253,7 @@ class Diagnostic:
         self.client = client
         self.history_store = history_store
         self.energy_dashboard = EnergyDashboard(history_store) if history_store else None
+        self.pv_actual = PVAcquisition(self.options, self.client, history_store)
         self._last_logged_status = None
         self._last_comfort_label = None
         self._last_heartbeat = None
@@ -616,7 +627,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.2",
+            "version": "1.0.0-alpha.3",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": True,
             "temperature_source": self.temperature_source,
@@ -743,8 +754,32 @@ def handler_factory(diag: Diagnostic):
                     with diag.lock:
                         state = diag.snapshot()
                     data['live'] = live_grid(state, diag.options['max_age_seconds'])
+                    if diag.pv_actual.history:
+                        try:
+                            data = diag.pv_actual.history.enrich(data)
+                        except (sqlite3.Error, ValueError, OSError):
+                            data['pv_history_error'] = 'Historique PV temporairement indisponible'
+                    pv = diag.pv_actual.snapshot()
+                    power = pv['power']
+                    calculated = pv['self']
+                    data['pv_actual'] = {
+                        'available': power['status']=='OK', 'source':power['source'],
+                        'reason': ('Production PV réelle : disponible' if power['status']=='OK' else
+                                   'Production PV réelle : non disponible — '+power['reason']),
+                        'power':power, 'energy_today':pv['today'], 'energy_total':pv['total'],
+                        'storage_error':pv['storage_error'], 'development':'SW-004.2'}
+                    data['self_consumption'] = {
+                        'available':calculated['status']=='OK',
+                        'reason':calculated['reason'], 'power':calculated,
+                        'topology_verified':diag.options['pv_self_consumption_topology_verified'],
+                        'sync_tolerance_seconds':15}
+                    data['forecast_comparison'] = {
+                        'mode':'Measured AC kept separate from raw Forecast.Solar predictions',
+                        'forecast_api':'./api/forecast-at', 'forecast_view':'./#profil',
+                        'correction_applied':False}
+
                     data['pv_configuration'] = {k:diag.options[k] for k in (
-                        'pv_actual_power_entity','pv_actual_energy_today_entity')}
+                        'pv_actual_power_entity','pv_actual_energy_today_entity','pv_actual_energy_total_entity')}
                     body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
                     content_type = 'application/json; charset=utf-8'
                 except (ValueError, OverflowError) as exc:
@@ -904,6 +939,15 @@ def main():
     worker.start()
     profile_worker = Thread(target=diag.profile_loop, args=(stop,), daemon=True)
     profile_worker.start()
+    def pv_loop():
+        while not stop.is_set():
+            if diag.pv_actual.enabled:
+                with diag.lock:
+                    grid_snapshot = diag.snapshot()
+                diag.pv_actual.poll(grid_snapshot)
+            stop.wait(diag.options['pv_actual_sample_seconds'])
+    pv_worker = Thread(target=pv_loop, daemon=True)
+    pv_worker.start()
     server = ThreadingHTTPServer(("0.0.0.0", 8099), handler_factory(diag))
     try:
         server.serve_forever(poll_interval=0.5)
@@ -912,6 +956,7 @@ def main():
         server.server_close()
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
+        pv_worker.join(timeout=15)
         if store is not None:
             store.close()
 

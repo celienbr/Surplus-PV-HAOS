@@ -1,7 +1,7 @@
 # Surplus PV — Canal de distribution Home Assistant OS
 
-Version 1.0.0-alpha.2 — diagnostic et simulation ARM64, aucune commande physique.
-Inclut le tableau de bord Énergie (gPlugK, jour/mois/année).
+Version 1.0.0-alpha.3 — diagnostic et simulation ARM64, aucune commande physique.
+Inclut le tableau de bord Énergie (gPlugK, Sofar optionnel, jour/mois/année).
 Dépôt : https://github.com/celienbr/Surplus-PV-HAOS
 
 Pour une application déjà installée depuis ce dépôt, utiliser Mettre à jour

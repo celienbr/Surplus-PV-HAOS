@@ -1,6 +1,15 @@
 # Historique des versions de l'application Surplus PV
 
-## 1.0.0-alpha.2 — 29.10.2026, candidate non publiée
+## 1.0.0-alpha.3 — 31.10.2026
+
+- Acquisition optionnelle Sofar via Home Assistant : puissance AC, production du jour et index total, avec contrôle des unités et de la fraîcheur.
+- Courbes PV et bilans jour/mois/année dans la page Énergie existante ; couverture partielle et anomalies explicites.
+- Autoconsommation et consommation maison calculées uniquement après confirmation de topologie et synchronisation des mesures.
+- Historique PV SQLite additif, uniquement si configuré ; données antérieures et réglages conservés. Aucun passé inventé.
+- Mise à jour en place depuis alpha.2 ; même slug, ARM64, Ingress et permissions. Sauvegarde préalable requise ; voir DOCS.md.
+- Validation logicielle en simulation et construction ARM64 ; réception réelle sur Raspberry Pi non effectuée. Aucune commande de puissance.
+
+## 1.0.0-alpha.2 — publiée le 29.10.2026
 
 - Nouvelle page Énergie : puissance réseau signée, fraîcheur HA et historique jour/mois/année en Europe/Zurich.
 - Bilans import/export estimés par intégration des puissances couvertes ; lacunes et couverture partielle explicites.

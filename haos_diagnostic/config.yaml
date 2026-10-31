@@ -1,6 +1,6 @@
 name: "Surplus PV - Diagnostic (sans puissance)"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.2"
+version: "1.0.0-alpha.3"
 description: "Lecture gPlugK et simulation du boiler, sans aucune commande materielle"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -37,6 +37,10 @@ options:
   forecast_solar_entry_id: ""
   pv_actual_power_entity: ""
   pv_actual_energy_today_entity: ""
+  pv_actual_energy_total_entity: ""
+  pv_actual_max_age_seconds: 120
+  pv_actual_sample_seconds: 60
+  pv_self_consumption_topology_verified: false
   weather_min_c: 50
   weather_buffer_c: 5
   weather_volume_l: 300
@@ -78,6 +82,10 @@ schema:
   forecast_solar_entry_id: str
   pv_actual_power_entity: str
   pv_actual_energy_today_entity: str
+  pv_actual_energy_total_entity: str
+  pv_actual_max_age_seconds: "int(10,900)"
+  pv_actual_sample_seconds: "int(10,120)"
+  pv_self_consumption_topology_verified: bool
   weather_min_c: "int(30,80)"
   weather_buffer_c: "int(0,20)"
   weather_volume_l: "int(1,2000)"
