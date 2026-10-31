@@ -1,6 +1,6 @@
 FROM ghcr.io/home-assistant/base-python:3.12-alpine3.24
 
-ARG BUILD_VERSION=1.0.0-alpha.2
+ARG BUILD_VERSION=1.0.0-alpha.3
 ARG BUILD_ARCH=aarch64
 LABEL io.hass.version="${BUILD_VERSION}" \
       io.hass.type="app" \

@@ -35,7 +35,6 @@
  }
  function energySeries(data){
   const day=data.period==='day',unit=day?'kW':'kWh';
-  const rows=day?data.points:data.buckets;
   const specs=day?[
    ['grid','grid_w','Réseau (+ import / − export)','network'],
    ['pv_actual','pv_actual_w','Production PV réelle','solar'],
@@ -46,10 +45,16 @@
    ['pv_actual','pv_actual_kwh','Production PV réelle','solar'],
    ['self_consumed','self_consumed_kwh','Autoconsommation PV','surplus']
   ];
-  return specs.map(([id,key,label,color])=>({id,label,color,unit,
-   source:id==='pv_actual'?'Sofar via HA · non disponible':id==='self_consumed'?'PV réelle − export · non disponible':data.source+(day?' · puissance mesurée':' · énergie estimée'),
-   points:rows.map(p=>({at:stamp(p),value:good(p[key])?p[key]*(day?.001:id==='export'?-1:1):null,
-     gap:p.gap_before===true,partial:p.partial===true})).filter(p=>Number.isFinite(p.at))}));
+  return specs.map(([id,key,label,color])=>{
+   const rows=day?(id==='pv_actual'?data.pv_history?.power_points||data.points:
+     id==='self_consumed'?data.pv_history?.self_consumed_points||data.points:data.points):data.buckets;
+   const source=id==='pv_actual'?(day?'Sofar via HA · puissance AC mesurée':'Sofar via HA · production et méthode indiquées'):
+     id==='self_consumed'?'Calcul PV AC − export · sous conditions validées':data.source+(day?' · puissance mesurée':' · énergie estimée');
+   return {id,label,color,unit,source,
+    points:rows.map(p=>({at:stamp(p),value:good(p[key])?p[key]*(day?.001:id==='export'?-1:1):null,
+      gap:p.gap_before===true,partial:id==='pv_actual'?p.pv_partial===true:id==='self_consumed'?p.self_partial===true:p.partial===true,
+      entity:p.entity_id||null,method:id==='pv_actual'?p.pv_method||null:null})).filter(p=>Number.isFinite(p.at))};
+  });
  }
  const formatTime=t=>new Intl.DateTimeFormat('fr-CH',{timeZone:'Europe/Zurich',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'shortOffset'}).format(new Date(t));
  if(typeof module!=='undefined')module.exports={series,swissDayEnd,formatTime,energySeries};

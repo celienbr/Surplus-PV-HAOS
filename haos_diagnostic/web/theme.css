@@ -28,3 +28,5 @@ body:has(#page-monitor){max-width:1000px;padding-bottom:35px}.value,.big,.status
 /* Energy consultation uses the existing palette and mobile shell. */
 .energy-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.energy-kpis strong{font-size:22px}.energy-kpis span{font-size:12px;color:var(--muted-ui)}.energy-viewport{width:100%;overflow:hidden;touch-action:pan-y;min-height:320px}.energy-viewport canvas{display:block;max-height:none;border-radius:10px}.energy-page .chart-legend button{white-space:normal;text-align:left;overflow-wrap:anywhere}.energy-page .chart-controls{flex-wrap:wrap}.energy-page .chart-controls input{max-width:175px}
 @media(max-width:600px){.energy-kpis{grid-template-columns:1fr}.bottom .nav-button{padding:10px 8px;font-size:11px}.energy-page .kpi strong{font-size:22px}}
+
+.energy-page p{overflow-wrap:anywhere}
