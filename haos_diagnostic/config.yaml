@@ -1,7 +1,7 @@
 name: "Surplus PV - Diagnostic (sans puissance)"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.3"
-description: "Lecture gPlugK et simulation du boiler, sans aucune commande materielle"
+version: "1.0.0-alpha.4"
+description: "AUTO virtuel, GP8600 explicite en banc ou manuel Boiler"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
   - aarch64
@@ -15,7 +15,12 @@ ingress_port: 8099
 panel_title: "Surplus PV - Test"
 panel_icon: "mdi:solar-power"
 panel_admin: true
+devices:
+  - /dev/i2c-1
 options:
+  dac_driver: simulated
+  dac_connection: bench
+  dac_i2c_address: 88
   pi_entity: sensor.gplugk_z_pi
   po_entity: sensor.gplugk_z_po
   sample_seconds: 10
@@ -61,6 +66,9 @@ options:
   pac_reference_cop: 3.5
   pac_cop_change_per_c: 0.1
 schema:
+  dac_driver: "list(simulated|gp8600)"
+  dac_connection: "list(bench|boiler)"
+  dac_i2c_address: "int(88,95)"
   pi_entity: str
   po_entity: str
   sample_seconds: "int(5,60)"

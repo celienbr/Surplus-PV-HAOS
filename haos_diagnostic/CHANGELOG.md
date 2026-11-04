@@ -1,5 +1,17 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.4 — 04.11.2026
+
+- Pilote GP8600 I²C réel 16 bits 0–20 mA, adresse configurable et simulateur par défaut.
+- Page Boiler : modes exclusifs AUTO / MANUEL / BANC DAC ; curseurs immédiats,
+  garde thermique et retour AUTO à cible atteinte ; aucune reprise au redémarrage.
+- Banc isolé : relevés multimètre persistants, écarts et calibration linéaire proposée,
+  sans correction appliquée ni mesure physique inventée.
+- AUTO conserve la régulation virtuelle, le confort et les projections 48 h.
+- Même slug, réglages et historiques préservés ; seul accès matériel ajouté : /dev/i2c-1.
+- Publication logicielle ; essais banc et réception réelle Pi/CELDUC non réalisés.
+  Conserver dac_driver=simulated jusqu’à validation physique distincte.
+
 ## 1.0.0-alpha.3 — 31.10.2026
 
 - Acquisition optionnelle Sofar via Home Assistant : puissance AC, production du jour et index total, avec contrôle des unités et de la fraîcheur.

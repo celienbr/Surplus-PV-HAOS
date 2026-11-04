@@ -1,8 +1,7 @@
-"""Safe read-only Home Assistant OS diagnostic with ingress monitoring.
+"""HAOS monitoring and explicit GP8600 bench/manual session control.
 
-This program CANNOT access GPIO, I2C or Home Assistant write APIs. All boiler
-power figures are hypothetical, calculated by the genuine project regulator
-against live gPlugK readings + an entirely virtual boiler load.
+AUTO retains the alpha.3 virtual regulator. HA APIs remain read-only; all DAC
+writes pass through OutputControl. Simulation is the default, without hardware.
 """
 from __future__ import annotations
 
@@ -28,6 +27,10 @@ from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .history_store import HistoryStore, parse_time
 from .energy_dashboard import EnergyDashboard, live_grid
 from .pv_actual import PVAcquisition
+from .gp8600 import make_dac
+from .output_control import OutputControl
+from .dac_calibration import CalibrationStore
+from .measurements import Measurement
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
 INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
@@ -198,6 +201,15 @@ def parse_options(source: dict) -> dict:
         raise ValueError('Invalid PV sample period')
     if not isinstance(options['pv_self_consumption_topology_verified'],bool):
         raise ValueError('PV topology confirmation must be boolean')
+    options['dac_driver'] = source.get('dac_driver', 'simulated')
+    options['dac_connection'] = source.get('dac_connection', 'bench')
+    options['dac_i2c_address'] = source.get('dac_i2c_address', 88)
+    if options['dac_driver'] not in ('simulated', 'gp8600'):
+        raise ValueError('Unknown DAC driver')
+    if options['dac_connection'] not in ('bench', 'boiler'):
+        raise ValueError('Unknown DAC wiring destination')
+    if type(options['dac_i2c_address']) is not int or not 88 <= options['dac_i2c_address'] <= 95:
+        raise ValueError('GP8600 I2C address must be 88..95')
     return options
 
 
@@ -231,7 +243,7 @@ def describe_sensor(state: dict, entity_id: str, now: datetime, max_age_s: float
 
 class Diagnostic:
     def __init__(self, options: dict, client=None, history_store=None,
-                 user_settings_path=None):
+                 user_settings_path=None, dac=None, calibration_store=None):
         self.user_settings_path = (Path(user_settings_path) if
                                    user_settings_path is not None else None)
         self.migrated_forecast_solar_entry_id = ""
@@ -242,6 +254,11 @@ class Diagnostic:
         if self.user_settings_path is not None and self.user_settings_path.exists():
             save_settings(self.user_settings_path, self.options,
                           self.migrated_forecast_solar_entry_id)
+        self.client = client
+        self.output = OutputControl(dac or make_dac(self.options), self.options['dac_connection'])
+        self.calibration = calibration_store or CalibrationStore()
+        self._control_generation = self.output.revision
+        self.refresh_control_temperature_once()
         self._last_meter_report = None
         self._last_poll_at = None
         self.comfort = {"status": "WAITING", "reason": "En attente de mesures valides.",
@@ -297,7 +314,12 @@ class Diagnostic:
     def poll_once(self, now: datetime | None = None) -> dict:
         injected_clock = now is not None
         now = now or datetime.now(timezone.utc)
+        generation = self.output.snapshot()['revision']
         with self.lock:
+            if generation != self._control_generation:
+                self.regulator.invalid_data('Output mode changed; discard old automatic command')
+                self._last_meter_report = None
+                self._control_generation = generation
             # Forecast HTTP work belongs to the profile worker. No forecast
             # dependency may postpone the fast measurement / thermal gate.
             try:
@@ -457,6 +479,7 @@ class Diagnostic:
                     "meter_age_s": None,
                     "simulation_state": "FAULT",
                 }
+            self.output.observe_auto(self.latest['simulated_boiler_w'], generation)
             result = self.snapshot()
         # Persistent recording is outside the regulator lock and never
         # participates in electrical decisions or causes a faulty command.
@@ -484,6 +507,36 @@ class Diagnostic:
             except (OSError, ValueError, sqlite3.Error) as error:
                 LOG.error("Noncritical telemetry storage failure: %s", error)
         return result
+
+    def refresh_control_temperature_once(self, now=None):
+        injected = now is not None
+        now = now or datetime.now(timezone.utc)
+        measurement = None
+        try:
+            entity = self.options['boiler_temperature_entity']
+            if entity and self.client is not None:
+                measurement = self.client.read_temperature_c(entity)
+            elif self.output.dac.kind == 'simulated':
+                measurement = Measurement(self.options['demo_water_c'], now)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            pass
+        if not injected:
+            now = datetime.now(timezone.utc)
+        try:
+            self.output.observe_temperature(measurement, self.options['demo_max_c'],
+                                            self.options['max_age_seconds'], now)
+        except OSError:
+            LOG.error('DAC thermal stop failed; physical output unknown')
+
+    def set_output(self, values):
+        if not isinstance(values, dict):
+            raise ValueError('Expected command object')
+        self.output.command(values)
+
+    def record_dac_measurement(self, values):
+        # Lock prevents a setpoint change between capture and persistence.
+        with self.output.lock:
+            return self.calibration.record(self.output.snapshot(), values)
 
     def refresh_weather_once(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
@@ -587,6 +640,8 @@ class Diagnostic:
                 save_settings(self.user_settings_path, proposed,
                               self.migrated_forecast_solar_entry_id)
             self.options = proposed
+            self.output.observe_temperature(self.output.temperature, proposed['demo_max_c'],
+                                            proposed['max_age_seconds'])
             self._last_meter_report = None
             self.comfort = {"status": "WAITING", "reason": "Réglages modifiés ; nouveau calcul attendu.",
                             "backup_power_w": 0, "applied_boiler_w": 0, "physical_outputs": False}
@@ -627,14 +682,15 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.3",
+            "version": "1.0.0-alpha.4",
             "weather_toggle_token": self.weather_toggle_token,
-            "read_only": True,
+            "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
             "comfort": dict(self.comfort),
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
-            "physical_outputs": "NOT_IMPLEMENTED",
+            "physical_outputs": "SIMULATED" if self.output.dac.kind == "simulated" else "GP8600_EXPLICIT_SESSION",
+            "output_control": self.output.snapshot(),
             "options": dict(self.options),
             **self.latest,
             "history": list(self.history),
@@ -726,13 +782,22 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/diagnostic", "/diagnostic.html"):
                 body = INDEX.read_bytes()
                 content_type = "text/html; charset=utf-8"
+            elif path == "/api/output":
+                body = json.dumps({**diag.output.snapshot(), "token": diag.weather_toggle_token},
+                                  ensure_ascii=False, allow_nan=False).encode('utf-8')
+                content_type = 'application/json; charset=utf-8'
+            elif path == "/api/dac-measurements":
+                state = diag.output.snapshot()['dac']
+                body = json.dumps(diag.calibration.snapshot(state['driver'], state.get('address')),
+                                  ensure_ascii=False, allow_nan=False).encode('utf-8')
+                content_type = 'application/json; charset=utf-8'
             elif path == "/theme.css":
                 body = THEME_CSS.read_bytes()
                 content_type = "text/css; charset=utf-8"
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/energy.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/energy.js", "/output.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":
@@ -861,9 +926,9 @@ def handler_factory(diag: Diagnostic):
             self.wfile.write(body)
 
         def do_POST(self):
-            # Local diagnostic settings only; never touch Home Assistant or power hardware.
+            # Authenticated Ingress session. Only OutputControl can write the DAC.
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/weather-toggle", "/api/user-settings"):
+            if path not in ("/api/weather-toggle", "/api/user-settings", "/api/output", "/api/dac-measurements"):
                 self.send_error(405, "No hardware/HA write operations")
                 return
             # HA ingress can remove or rewrite Sec-Fetch-Site and Host,
@@ -891,13 +956,20 @@ def handler_factory(diag: Diagnostic):
                         self.send_error(400, "Expected enabled and token fields")
                         return
                     diag.set_weather_enabled(content["enabled"])
+                elif path in ('/api/output', '/api/dac-measurements'):
+                    if set(content) != {'command', 'token'}:
+                        raise ValueError('Expected command and token fields')
+                    if path == '/api/output':
+                        diag.set_output(content['command'])
+                    else:
+                        diag.record_dac_measurement(content['command'])
                 else:
                     if set(content) != {"settings", "token"}:
                         self.send_error(400, "Expected settings and token fields")
                         return
                     diag.set_user_settings(content["settings"])
-            except OSError:
-                self.send_error(503, "Cannot save diagnostic settings")
+            except (OSError, sqlite3.Error):
+                self.send_error(503, "Operation failed; inspect output state")
                 return
             except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
                 self.send_error(400, "Invalid JSON")
@@ -918,7 +990,7 @@ def handler_factory(diag: Diagnostic):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    LOG.warning("DIAGNOSTIC ONLY. No GPIO, I2C, DAC, watchdog, or HA writes.")
+    LOG.warning("AUTO virtual; GP8600 only by explicit session command. No relay or HA writes.")
     config_file = Path(os.environ.get("SPV_OPTIONS_FILE", "/data/options.json"))
     options = json.loads(config_file.read_text(encoding="utf-8"))
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN") or ""
@@ -931,10 +1003,26 @@ def main():
                   "Surplus PV diagnostic started, persistent history active")
     except (OSError, sqlite3.Error) as error:
         LOG.error("Persistent storage unavailable: %s", error)
-    diag = Diagnostic(options, client, history_store=store,
+    calibration = CalibrationStore(os.environ.get('SPV_DAC_DB', '/data/surplus_pv_dac.sqlite3'))
+    diag = Diagnostic(options, client, history_store=store, calibration_store=calibration,
                       user_settings_path=os.environ.get("SPV_USER_SETTINGS_FILE",
                                                       "/data/surplus_pv_user_settings.json"))
     stop = Event()
+    def thermal_loop():
+        while not stop.is_set():
+            diag.refresh_control_temperature_once()
+            stop.wait(1)
+    def guard_loop():
+        while not stop.is_set():
+            try:
+                diag.output.check_freshness()
+            except OSError:
+                LOG.error('DAC stop failure; physical output unknown')
+            stop.wait(0.25)
+    thermal_worker = Thread(target=thermal_loop, daemon=True)
+    guard_worker = Thread(target=guard_loop, daemon=True)
+    thermal_worker.start()
+    guard_worker.start()
     worker = Thread(target=diag.loop, args=(stop,), daemon=True)
     worker.start()
     profile_worker = Thread(target=diag.profile_loop, args=(stop,), daemon=True)
@@ -954,6 +1042,13 @@ def main():
     finally:
         stop.set()
         server.server_close()
+        try:
+            diag.output.close()
+        except OSError:
+            LOG.error('Shutdown DAC zero failed; independent isolation required')
+        thermal_worker.join(timeout=2)
+        guard_worker.join(timeout=2)
+        calibration.close()
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
         pv_worker.join(timeout=15)

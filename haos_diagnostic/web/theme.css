@@ -30,3 +30,5 @@ body:has(#page-monitor){max-width:1000px;padding-bottom:35px}.value,.big,.status
 @media(max-width:600px){.energy-kpis{grid-template-columns:1fr}.bottom .nav-button{padding:10px 8px;font-size:11px}.energy-page .kpi strong{font-size:22px}}
 
 .energy-page p{overflow-wrap:anywhere}
+
+#output-panel input[type=range]{width:100%;min-height:44px} #output-panel input[type=number],#output-panel select{max-width:100%;min-height:44px} #output-panel label{display:block;margin:12px 0} #output-panel [hidden]{display:none} .measurement-scroll{overflow-x:auto} #output-panel td,#output-panel th{padding:6px;text-align:left} #output-error{color:var(--danger,#c43c36)}

@@ -1,14 +1,36 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.3
+# Surplus PV — Home Assistant OS 1.0.0-alpha.4
 
-Application ARM64 (aarch64), diagnostic et simulation uniquement. Tableau de
+Version alpha.4 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
+Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable. Tableau de
 bord Énergie : réseau gPlugK, vues jour/mois/année et bilans estimés, couverture
 partielle explicite. SW-004.2 ajoute l'acquisition AC Sofar optionnelle,
 les index de production et l'autoconsommation conditionnelle. Sans configuration,
 PV réelle et autoconsommation restent indisponibles. Prévisions Forecast.Solar séparées des mesures.
 Planification de confort et trajectoire 48 h conservées.
-Aucune commande physique : GPIO, I²C, DAC, CELDUC et relais non implémentés.
+GP8600 réel : dac_driver=gp8600, dac_i2c_address=88..95, bus /dev/i2c-1.
+DAC 16 bits, 0–20 mA. Aucun GPIO, relais, K2 ou service HA de commande.
+dac_connection=bench : uniquement banc isolé sur résistance, jamais CELDUC.
+dac_connection=boiler : MANUEL possible avec température HA valide ; conversion
+4 + 16 × puissance / 100 mA, puissance non calibrée. 0 % = aucune demande de
+chauffe ; 4 mA ne constitue pas une isolation de sécurité. Les protections
+thermiques indépendantes restent nécessaires. Cible atteinte ou mesure invalide :
+retour AUTO et zéro envoyé. AUTO reste le régulateur virtuel alpha.3.
+Au redémarrage : AUTO, sortie zéro, aucune reprise des commandes précédentes.
+Erreur I²C : sortie inconnue, reprise explicite à zéro, aucune ancienne consigne
+rejouée. Une coupure logicielle n'est pas une coupure électrique indépendante.
+BANC DAC : curseur/saisie immédiats 0–20 mA, sortie activable ; aucune régulation,
+prévision, température Boiler ou planification ne modifie ce courant. Relevés
+multimètre stockés séparément dans /data/surplus_pv_dac.sqlite3 ; correction
+linéaire proposée mais non appliquée sans revue des mesures et des extrémités.
+Résistance nominale 250 Ω ±1 %, ≥0,5 W : 20 mA donne 5 V et 0,1 W.
+La conformité de charge/alimentation et le montage isolé sont à vérifier en VAL.
+La communication I²C ne prouve aucune mesure physique. Simulation identifiée.
+Seul /dev/i2c-1 est exposé ; aucun privilège général ajouté. Le bus doit être
+activé dans HAOS par le propriétaire selon la documentation officielle avant
+un essai autorisé. Dockerfile inchangé : os/fcntl font partie de Python Linux.
+Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
 
-## Mise à jour depuis 1.0.0-alpha.2 (ou alpha.1)
+## Mise à jour depuis 1.0.0-alpha.3
 
 1. Dans Home Assistant, noter la version, le dépôt et l'identifiant exact de
    l'application installée. Conserver le dépôt et la même application.
@@ -23,15 +45,15 @@ Aucune commande physique : GPIO, I²C, DAC, CELDUC et relais non implémentés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.3, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.4, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.3, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.4, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Ouvrir Énergie : signe import/export, fraîcheur et couverture de l'historique,
    navigation jour/mois/année. PV réelle/autoconsommation doivent rester
-   indisponibles sans Sofar. Aucun pilotage physique ne doit apparaître.
+   indisponibles sans Sofar. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
 
 Les tables SQLite antérieures sont conservées. Une table PV additive est créée
 uniquement si une source PV est configurée. Données persistantes :
@@ -54,8 +76,8 @@ le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux résea
 récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
 silencieusement à zéro. Les nouvelles observations sont conservées dans une table
 SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-La publication alpha.3 a été autorisée ; la mise à jour et sa sauvegarde sont
-effectuées par le propriétaire depuis Home Assistant. Les lectures et performances
+Publication logicielle alpha.4 demandée par le propriétaire ; sauvegarde et mise
+à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
 sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.
 
