@@ -1,4 +1,34 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Boiler</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header><section class="panel"><div class="section-heading"><span data-icon="boiler"></span><h2>Boiler virtuel</h2></div><p class="notice">Température selon la source indiquée · puissance simulée · aucune sortie physique</p><div class="boiler-kpis"><article class="kpi"><small>Réseau réel signé</small><strong id="k-grid">—</strong></article><article class="kpi"><small>Chauffe virtuelle</small><strong id="k-heat">—</strong></article><article class="kpi"><small>Réseau avec chauffe virtuelle</small><strong id="k-after">—</strong></article><article class="kpi"><small id="water-source-label">Température non validée</small><strong id="k-temp">—</strong></article></div><div class="boiler-status"><span data-icon="boiler"></span><div><h3>Température et consigne</h3><p><strong id="demo-temp">—</strong> → plafond <strong id="target-temp">—</strong></p><div class="thermal-track"><div id="thermal-fill" class="thermal-fill"></div></div><p id="heat-state"></p><p>Limites configurées : <span id="boiler-limits">—</span></p></div></div><div class="decision"><strong id="grid-health">Connexion…</strong><p id="grid-detail"></p></div><div class="chart-controls"><button id="view-history" class="primary">Graphique unifié et historique</button><button id="view-strategy">Stratégie météo</button><button id="advanced">Diagnostic détaillé</button></div><div class="decision"><strong id="comfort-state">Planification du confort en attente</strong><p id="comfort-details"></p></div><p class="muted">Planification simulée : aucune commande électrique raccordée. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p><p class="statusline"><span id="conn-dot"></span><span id="conn-text" role="status"></span></p></section></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Entrées</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./energie" class="nav-button">Énergie</a><a href="./diagnostic" class="nav-button">Diagnostic</a></nav><script>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Boiler</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script><script src="./output.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header><section class="panel"><div class="section-heading"><span data-icon="boiler"></span><h2>Boiler virtuel</h2></div><p class="notice">Température selon la source indiquée · puissance simulée · aucune sortie physique</p><div class="boiler-kpis"><article class="kpi"><small>Réseau réel signé</small><strong id="k-grid">—</strong></article><article class="kpi"><small>Chauffe virtuelle</small><strong id="k-heat">—</strong></article><article class="kpi"><small>Réseau avec chauffe virtuelle</small><strong id="k-after">—</strong></article><article class="kpi"><small id="water-source-label">Température non validée</small><strong id="k-temp">—</strong></article></div><div class="boiler-status"><span data-icon="boiler"></span><div><h3>Température et consigne</h3><p><strong id="demo-temp">—</strong> → plafond <strong id="target-temp">—</strong></p><div class="thermal-track"><div id="thermal-fill" class="thermal-fill"></div></div><p id="heat-state"></p><p>Limites configurées : <span id="boiler-limits">—</span></p></div></div><div class="decision"><strong id="grid-health">Connexion…</strong><p id="grid-detail"></p></div><div class="chart-controls"><button id="view-history" class="primary">Graphique unifié et historique</button><button id="view-strategy">Stratégie météo</button><button id="advanced">Diagnostic détaillé</button></div><div class="decision"><strong id="comfort-state">Planification du confort en attente</strong><p id="comfort-details"></p></div><p class="muted">Planification simulée : aucune commande électrique raccordée. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p><p class="statusline"><span id="conn-dot"></span><span id="conn-text" role="status"></span></p></section><section class="panel" id="output-panel">
+ <h2>Commande Boiler et banc DAC</h2>
+ <p id="output-driver" role="status">Connexion au pilote…</p>
+ <label>Mode <select id="output-mode"><option value="AUTO">AUTO</option><option value="MANUEL">MANUEL</option><option value="BANC_DAC">BANC DAC</option></select></label>
+  <label>Température de consigne °C <input id="manual-target" type="number" min="30" max="80" step="0.5" value="70"></label>
+ <div id="manual-controls" hidden>
+  <p>La cible est fixée à l’entrée en MANUEL. Température valide surveillée ; cible atteinte → AUTO.</p>
+  <label>Puissance demandée <output id="manual-percent">0 %</output><input id="manual-power" type="range" min="0" max="100" step="1" value="0"></label>
+  <p>4 + 16 × puissance / 100 mA. Puissance réelle non calibrée. À 0 %, aucune chauffe demandée ; 4 mA ne constitue pas une coupure de sécurité.</p>
+ </div>
+ <div id="bench-confirmation">
+  <label><input id="bench-isolated" type="checkbox"> Banc isolé du 400 V, du CELDUC et de K2 ; résistance de charge seule.</label>
+ </div>
+ <div id="bench-controls" hidden>
+  <label><input id="bench-enable" type="checkbox"> Activer la sortie DAC</label>
+  <label>Courant direct 0–20 mA <input id="bench-slider" type="range" min="0" max="20" step="0.001" value="0"></label>
+  <label>Consigne précise mA <input id="bench-current" type="number" min="0" max="20" step="0.001" value="0"></label>
+  <p>Consigne demandée : <output id="bench-requested">0 mA</output>. Aucune régulation ni commande K2/CELDUC.</p>
+  <p>Charge nominale 250 Ω ±1 %, ≥0,5 W, compatibilité de charge à confirmer selon alimentation et fiche constructeur. Référence : 0/4/8/12/16/20 mA → 0/1/2/3/4/5 V.</p>
+  <label>Résistance relevée Ω <input id="bench-resistance" type="number" min="247.5" max="252.5" step="0.01" value="250"></label>
+  <label>Tension réelle au multimètre V <input id="bench-voltage" type="number" min="0" max="6" step="0.0001" placeholder="Mesure requise"></label>
+  <p>Mesure saisie : <output id="bench-measured">—</output> ; écart à la consigne : <output id="bench-error">—</output>.</p>
+  <button id="bench-record" type="button">Enregistrer le relevé</button>
+  <p>Un ACK I²C ne mesure aucun courant. Les relevés simulés restent identifiés comme simulation.</p>
+  <p id="bench-fit">Calibration : relevés insuffisants</p>
+  <div class="measurement-scroll"><table><thead><tr><th>Consigne mA</th><th>Mesure mA</th><th>Écart mA</th><th>Origine</th></tr></thead><tbody id="bench-points"></tbody></table></div>
+ </div>
+ <button id="output-recover" type="button">Réinitialiser le DAC à zéro</button>
+ <p id="output-state" role="status"></p><p id="output-error" role="alert"></p>
+ <p>AUTO conserve la planification virtuelle alpha.3. Au redémarrage : AUTO, sortie zéro, aucune reprise manuelle ou de banc. Les protections thermiques indépendantes restent nécessaires.</p>
+</section></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Entrées</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./energie" class="nav-button">Énergie</a><a href="./diagnostic" class="nav-button">Diagnostic</a></nav><script>
 "use strict";
 const $=id=>document.getElementById(id);
 const good=n=>typeof n==="number"&&Number.isFinite(n);
@@ -12,7 +42,7 @@ async function refresh(){
   $("k-after").textContent=watts(p.simulated_grid_after_w);
   $("water-source-label").textContent=p.temperature_source==="HOME_ASSISTANT"?"Température lue dans HA":"Température fictive";
   $("k-temp").textContent=deg(p.water_temperature_c);$("demo-temp").textContent=deg(p.water_temperature_c);
-  const target=w.status==="ADAPTIVE"?w.target_c:o.demo_max_c;
+  const target=p.output_control?.mode==="MANUEL"?p.output_control.target_c:(w.status==="ADAPTIVE"?w.target_c:o.demo_max_c);
   $("target-temp").textContent=deg(target);$("boiler-limits").textContent=deg(o.weather_min_c)+" à "+deg(o.demo_max_c);
   $("thermal-fill").style.width=Math.min(100,Math.max(0,100*(p.water_temperature_c??0)/Math.max(1,target)))+"%";
   $("heat-state").textContent="Simulation : "+(p.simulation_state||"—")+
@@ -20,7 +50,7 @@ async function refresh(){
   $("grid-health").textContent=p.communication_healthy?"● Compteur connecté":"● Compteur à vérifier";
   $("grid-detail").textContent=p.data_quality||p.error||"Aucune mesure.";
   $("conn-dot").className="statusdot "+(p.communication_healthy?"ok":"warn");
-  $("conn-text").textContent="Lecture seule · version "+p.version;
+  $("conn-text").textContent="Surveillance · version "+p.version;
   const c=p.comfort||{};
   $("comfort-state").textContent=c.reason||"Plan de confort indisponible";
   const instant=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}):'—';

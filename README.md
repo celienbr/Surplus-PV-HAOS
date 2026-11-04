@@ -1,6 +1,8 @@
 # Surplus PV — Canal de distribution Home Assistant OS
 
-Version 1.0.0-alpha.3 — diagnostic et simulation ARM64, aucune commande physique.
+Version 1.0.0-alpha.4 — mise à jour ARM64, simulation par défaut.
+GP8600 banc et MANUEL disponibles sur sélection explicite après validation physique.
+Mise à jour Home Assistant effectuée par le propriétaire ; aucun essai matériel validé.
 Inclut le tableau de bord Énergie (gPlugK, Sofar optionnel, jour/mois/année).
 Dépôt : https://github.com/celienbr/Surplus-PV-HAOS
 
