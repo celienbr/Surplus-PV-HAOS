@@ -579,8 +579,11 @@ class Diagnostic:
                 self.output.command(values)
             return
         if values.get('action') == 'stop':
-            self.output.command(values)
-            self.heartbeat.stop()
+            try:
+                self.output.command(values)
+            finally:
+                # Either interface may fail: always attempt both independent stops.
+                self.heartbeat.stop()
             return
         self.output.command(values)
 
