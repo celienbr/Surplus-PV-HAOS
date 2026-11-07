@@ -1,6 +1,6 @@
 name: "Surplus PV - Diagnostic (sans puissance)"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.5"
+version: "1.0.0-alpha.6"
 description: "AUTO virtuel, GP8600 explicite en banc ou manuel Boiler"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -17,6 +17,7 @@ panel_icon: "mdi:solar-power"
 panel_admin: true
 devices:
   - /dev/i2c-1
+  - /dev/gpiochip0
 options:
   dac_driver: simulated
   dac_connection: bench

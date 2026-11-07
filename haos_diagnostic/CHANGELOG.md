@@ -50,3 +50,8 @@
 ## 0.7.0-comfort-test1 — socle antérieur
 - Planification de confort Europe/Zurich, échéance horaire, appoint réseau simulé seulement sur autorisation, repli prudent, trajectoire 48 h.
 - Version historique conservée pour le retour arrière.
+# 1.0.0-alpha.6 — candidat
+
+- Heartbeat GPIO17 sélectionnable et surveillance des tâches, arrêt par défaut.
+- Modes DAC AUTO/MANUEL réels sélectionnables, sans reprise de consigne.
+- Conversion de puissance provisoire et inhibition matérielle non qualifiée.
