@@ -575,7 +575,12 @@ class Diagnostic:
                 self.output.command(values)
             return
         if values.get('action') == 'stop':
-            self.heartbeat.stop()
+            try:
+                self.heartbeat.stop()
+            except OSError:
+                # A failed GPIO deassertion must not prevent a best-effort DAC stop.
+                self.output.command(values)
+                raise
         self.output.command(values)
 
     def set_heartbeat(self, command):
