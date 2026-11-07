@@ -1,5 +1,13 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.5 — candidat SW-006
+
+- Retrait des pages Énergie et diagnostic ; acquisitions, prévisions et historiques conservés.
+- Graphiques simplifiés, sélection préservée au rafraîchissement et séries denses prises en charge.
+- Sonde 1-Wire hors boiler via entité HA : état, rapports horodatés et historique SQLite additif.
+- AUTO demeure virtuel ; MANUEL réel exige une température d'eau valide, indépendante de la sonde à l'air.
+- Slug, Ingress, réglages, historiques et arbitre de sortie conservés. Accès GPIO4/owserver à vérifier sur le Pi.
+
 ## 1.0.0-alpha.4 — 04.11.2026
 
 - Pilote GP8600 I²C réel 16 bits 0–20 mA, adresse configurable et simulateur par défaut.

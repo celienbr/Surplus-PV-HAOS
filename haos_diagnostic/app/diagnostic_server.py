@@ -25,6 +25,7 @@ from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
 from .forecast_adapter import build_weather_preview
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .history_store import HistoryStore, parse_time
+from .air_probe import AirProbe
 from .energy_dashboard import EnergyDashboard, live_grid
 from .pv_actual import PVAcquisition
 from .gp8600 import make_dac
@@ -33,7 +34,6 @@ from .dac_calibration import CalibrationStore
 from .measurements import Measurement
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
-INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
 MOBILE_INPUTS = Path(__file__).resolve().parent.parent / "web" / "inputs.html"
 PROFILE_VIEW = Path(__file__).resolve().parent.parent / "web" / "profile.html"
 BOILER_VIEW = Path(__file__).resolve().parent.parent / "web" / "boiler.html"
@@ -61,6 +61,8 @@ def parse_options(source: dict) -> dict:
         "comfort_time": source.get("comfort_time", "06:00"),
         "grid_backup_enabled": source.get("grid_backup_enabled", False),
         "boiler_temperature_entity": source.get("boiler_temperature_entity", ""),
+        "air_probe_entity": source.get("air_probe_entity", ""),
+        "air_probe_address": source.get("air_probe_address", ""),
         "comfort_efficiency": float(source.get("comfort_efficiency", 0.95)),
         "comfort_loss_w": float(source.get("comfort_loss_w", 100)),
         "comfort_margin_minutes": float(source.get("comfort_margin_minutes", 20)),
@@ -129,6 +131,16 @@ def parse_options(source: dict) -> dict:
     if not isinstance(entity, str) or (entity and (not entity.startswith("sensor.")
             or not all(c.isalnum() or c in "._" for c in entity))):
         raise ValueError("Invalid boiler temperature sensor ID")
+    probe = options['air_probe_entity']
+    address = options['air_probe_address']
+    if not isinstance(probe, str) or (probe and (not probe.startswith('sensor.') or
+            not all(c.isalnum() or c in '._' for c in probe))):
+        raise ValueError('Invalid air probe entity')
+    if not isinstance(address, str) or (address and (len(address) != 12 or
+            any(c not in '0123456789abcdefABCDEF' for c in address))):
+        raise ValueError('Invalid DS18B20 address')
+    if bool(probe) != bool(address) or (probe and probe == entity):
+        raise ValueError('Air probe needs an address and a distinct boiler entity')
     comfort = options["comfort_time"]
     if not isinstance(comfort, str) or len(comfort) != 5 or comfort[2] != ":" or not (
             comfort[:2].isdigit() and comfort[3:].isdigit() and
@@ -255,6 +267,8 @@ class Diagnostic:
             save_settings(self.user_settings_path, self.options,
                           self.migrated_forecast_solar_entry_id)
         self.client = client
+        self.air_probe = AirProbe(self.options['air_probe_entity'], self.options['air_probe_address'],
+                                  client, self.options['max_age_seconds'], history_store)
         self.output = OutputControl(dac or make_dac(self.options), self.options['dac_connection'])
         self.calibration = calibration_store or CalibrationStore()
         self._control_generation = self.output.revision
@@ -682,11 +696,12 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.4",
+            "version": "1.0.0-alpha.5",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
+            "air_probe": self.air_probe.snapshot(),
             "comfort": dict(self.comfort),
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
             "physical_outputs": "SIMULATED" if self.output.dac.kind == "simulated" else "GP8600_EXPLICIT_SESSION",
@@ -776,15 +791,16 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/boiler", "/boiler.html"):
                 body = BOILER_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
-            elif path in ('/energie', '/energy.html'):
-                body = (MOBILE_INPUTS.parent / 'energy.html').read_bytes()
-                content_type = 'text/html; charset=utf-8'
-            elif path in ("/diagnostic", "/diagnostic.html"):
-                body = INDEX.read_bytes()
-                content_type = "text/html; charset=utf-8"
             elif path == "/api/output":
                 body = json.dumps({**diag.output.snapshot(), "token": diag.weather_toggle_token},
                                   ensure_ascii=False, allow_nan=False).encode('utf-8')
+                content_type = 'application/json; charset=utf-8'
+            elif path == '/api/air-probe-history':
+                try:
+                    body = json.dumps({'points': diag.air_probe.history()}, allow_nan=False).encode('utf-8')
+                except (OSError, sqlite3.Error):
+                    self.send_error(503, 'Air probe history unavailable')
+                    return
                 content_type = 'application/json; charset=utf-8'
             elif path == "/api/dac-measurements":
                 state = diag.output.snapshot()['dac']
@@ -797,7 +813,7 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/energy.js", "/output.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/air_probe_chart.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":
@@ -1036,6 +1052,12 @@ def main():
             stop.wait(diag.options['pv_actual_sample_seconds'])
     pv_worker = Thread(target=pv_loop, daemon=True)
     pv_worker.start()
+    def air_probe_loop():
+        while not stop.is_set():
+            diag.air_probe.poll()
+            stop.wait(10)
+    air_probe_worker = Thread(target=air_probe_loop, daemon=True)
+    air_probe_worker.start()
     server = ThreadingHTTPServer(("0.0.0.0", 8099), handler_factory(diag))
     try:
         server.serve_forever(poll_interval=0.5)
@@ -1052,6 +1074,7 @@ def main():
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
         pv_worker.join(timeout=15)
+        air_probe_worker.join(timeout=5)
         if store is not None:
             store.close()
 

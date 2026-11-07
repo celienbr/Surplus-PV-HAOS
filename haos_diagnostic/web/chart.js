@@ -4,6 +4,26 @@
 (function(){
  const HOUR=3600000, good=n=>typeof n==='number'&&Number.isFinite(n);
  const stamp=p=>Date.parse(p.at);
+ // Avoid spreading large histories into Math.min/max: browsers limit the
+ // number of function arguments, and a dense series must not break refresh.
+ function extent(values,fallback,axis){
+  let lo=Infinity,hi=-Infinity;
+  for(const value of values)if(good(value)){lo=Math.min(lo,value);hi=Math.max(hi,value);}
+  if(lo===Infinity)return fallback;
+  if(axis==='power'){lo=Math.min(0,lo);hi=Math.max(1,hi);lo=Math.floor(lo);hi=Math.ceil(hi);}
+  else{lo=Math.floor((lo-2)/5)*5;hi=Math.ceil((hi+2)/5)*5;}
+  return hi===lo?[lo,lo+1]:[lo,hi];
+ }
+ // The timestamps are sorted once per render. Binary search keeps touch and
+ // keyboard selection responsive even for very dense histories.
+ function nearestIndex(times, at){
+  if(!times.length)return -1;
+  let lo=0,hi=times.length;
+  while(lo<hi){const mid=lo+Math.floor((hi-lo)/2);if(times[mid]<at)lo=mid+1;else hi=mid;}
+  if(lo===0)return 0;
+  if(lo===times.length)return lo-1;
+  return at-times[lo-1]<=times[lo]-at?lo-1:lo;
+ }
  const definitions=[
   {id:'grid',key:'grid_w',label:'Réseau gPlugK',kind:'mesure réelle',unit:'kW',factor:.001,axis:'power',color:'network',dash:[],source:'history'},
   {id:'virtual',key:'simulated_boiler_w',label:'Chauffe virtuelle',kind:'simulation enregistrée',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[2,3],source:'history'},
@@ -57,18 +77,18 @@
   });
  }
  const formatTime=t=>new Intl.DateTimeFormat('fr-CH',{timeZone:'Europe/Zurich',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'shortOffset'}).format(new Date(t));
- if(typeof module!=='undefined')module.exports={series,swissDayEnd,formatTime,energySeries};
+ if(typeof module!=='undefined')module.exports={series,swissDayEnd,formatTime,energySeries,extent,nearestIndex};
  if(typeof document==='undefined')return;
  window.SurplusTime={swissDayEnd,formatTime};
  window.SurplusEnergySeries=energySeries;
  const $=id=>document.getElementById(id),canvas=$('chart-power'),viewport=$('viewport-power');if(!canvas)return;
  let status=null,history=[],liveProfile={},archived=null,savedAt=null,anchor=Date.now(),isLive=true,zoom=1,selected=null,range='all';
- const visible=new Set(definitions.map(s=>s.id));let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
+ // Keep the default view readable; the remaining series stay selectable.
+ const visible=new Set(['grid','pv','planned','water','target']);let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
  let legendSignature='',renderQueued=false,pendingCenter=true;
  function schedule(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;draw();});}
  function context(can,w,h){const dpr=Math.min(devicePixelRatio||1,2);can.width=Math.round(w*dpr);can.height=Math.round(h*dpr);can.style.width=w+'px';can.style.height=h+'px';const ctx=can.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return ctx;}
  function palette(){return window.SurplusTheme.colors();}
- function extent(values,fallback,axis){if(!values.length)return fallback;let lo=Math.min(...values),hi=Math.max(...values);if(axis==='power'){lo=Math.min(0,lo);hi=Math.max(1,hi);lo=Math.floor(lo);hi=Math.ceil(hi);}else{lo=Math.floor((lo-2)/5)*5;hi=Math.ceil((hi+2)/5)*5;}return hi===lo?[lo,lo+1]:[lo,hi];}
  function availableSeries(){const all=series(history,archived||liveProfile);return all.filter(s=>!['target','planned','backup','water'].includes(s.id)||s.points.some(p=>good(p.value)));}
  function draw(){
   const now=Date.now();if(isLive)anchor=now;
@@ -94,13 +114,16 @@
    for(const point of s.points){if(!good(point.value)){previous=null;continue;}const X=x(point.at),Y=y(point.value,s.axis);
     if(!previous||point.gap||(s.source==='forecast'&&point.at-previous.at>1.6*HOUR)){ctx.moveTo(X,Y);if(s.source==='history')ctx.fillRect(X-1.3,Y-1.3,2.6,2.6);}else{ctx.lineTo(X,Y);}previous=point;}
    ctx.stroke();
-   if(s.source==='forecast'){ctx.setLineDash([]);for(const point of s.points)if(good(point.value)){ctx.beginPath();ctx.arc(x(point.at),y(point.value,s.axis),2,0,Math.PI*2);ctx.fill();}}
+   // Keep every point in the path and selection; omit overlapping markers
+   // when a dense forecast would otherwise obscure the curves.
+   if(s.source==='forecast'){ctx.setLineDash([]);let lastX=-Infinity;for(const point of s.points)if(good(point.value)){const X=x(point.at);if(X-lastX<8)continue;ctx.beginPath();ctx.arc(X,y(point.value,s.axis),2,0,Math.PI*2);ctx.fill();lastX=X;}}
   }
   function marker(at,label,color){if(at<start||at>end)return;const X=x(at);ctx.setLineDash([5,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(X,top-9);ctx.lineTo(X,plotHeight-bottom);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=p.background;const labelWidth=ctx.measureText(label).width+10;const left=Math.max(0,Math.min(width-labelWidth,X+5));ctx.fillRect(left,3,labelWidth,20);ctx.fillStyle=color;ctx.font='bold 11px system-ui';ctx.fillText(label,left+3,18);}
+  selectionTimes=[...new Set(drawn.flatMap(s=>s.points.filter(p=>good(p.value)).map(p=>p.at)))].sort((a,b)=>a-b);
+  if(selected!==null&&selectionTimes[nearestIndex(selectionTimes,selected)]!==selected)selected=null;
   marker(now,'Maintenant',p.ticks);if(!isLive)marker(anchor,'Repère historique',p.temperature);
   if(selected!==null)marker(selected,'Sélection',p.heater);
   if(!drawn.some(s=>s.points.some(p=>good(p.value)))){ctx.fillStyle=p.ticks;ctx.font='13px system-ui';ctx.fillText('Aucune donnée disponible dans cette vue.',20,65);}
-  selectionTimes=[...new Set(drawn.flatMap(s=>s.points.filter(p=>good(p.value)).map(p=>p.at)))].sort((a,b)=>a-b);
   $('history-scale').textContent=Math.round(zoom*100)+' %';$('history-window').textContent=formatTime(start)+' → '+formatTime(end);
   const prof=archived||liveProfile;
   $('source-note').textContent=(isLive?'Prévision actuelle':'Prévision archivée')+' · PV horaire : '+(prof.solar_status||'—')+' · météo : '+(prof.meteo_status||'—')+' · PAC : '+(prof.pac_status||'—')+'. '+(prof.solar_error||'')+' '+(prof.meteo_error||'');
@@ -120,11 +143,11 @@
  viewport.addEventListener('touchmove',e=>{if(!gesture||e.touches.length!==2)return;e.preventDefault();zoom=Math.max(.5,Math.min(6,gesture.zoom*distance(e.touches)/Math.max(10,gesture.distance)));draw();viewport.scrollLeft=gesture.fraction*width-gesture.center;},{passive:false});
  viewport.addEventListener('touchend',e=>{if(e.touches.length<2)gesture=null;},{passive:true});
  canvas.addEventListener('pointerdown',e=>{tap={x:e.clientX,y:e.clientY,scroll:viewport.scrollLeft};});
- canvas.addEventListener('pointerup',e=>{if(!tap||gesture||Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8||Math.abs(tap.scroll-viewport.scrollLeft)>8)return;tap=null;const x=e.clientX-canvas.getBoundingClientRect().left;const at=start+(x-12)/(width-24)*(end-start);if(selectionTimes.length){selected=selectionTimes.reduce((a,b)=>Math.abs(a-at)<Math.abs(b-at)?a:b);schedule();}});
- viewport.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key)||!selectionTimes.length)return;e.preventDefault();const i=selected===null?-1:selectionTimes.indexOf(selected);selected=selectionTimes[Math.max(0,Math.min(selectionTimes.length-1,i+(e.key==='ArrowRight'?1:-1)))];schedule();const x=12+(selected-start)/(end-start)*(width-24);if(x<viewport.scrollLeft||x>viewport.scrollLeft+viewport.clientWidth)viewport.scrollLeft=x-viewport.clientWidth/2;});
+ canvas.addEventListener('pointerup',e=>{if(!tap||gesture||Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8||Math.abs(tap.scroll-viewport.scrollLeft)>8)return;tap=null;const x=e.clientX-canvas.getBoundingClientRect().left;const at=start+(x-12)/(width-24)*(end-start);const i=nearestIndex(selectionTimes,at);if(i>=0){selected=selectionTimes[i];schedule();}});
+ viewport.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key)||!selectionTimes.length)return;e.preventDefault();const i=selected===null?-1:nearestIndex(selectionTimes,selected);selected=selectionTimes[Math.max(0,Math.min(selectionTimes.length-1,i+(e.key==='ArrowRight'?1:-1)))];schedule();const x=12+(selected-start)/(end-start)*(width-24);if(x<viewport.scrollLeft||x>viewport.scrollLeft+viewport.clientWidth)viewport.scrollLeft=x-viewport.clientWidth/2;});
  window.SurplusChart={
   setStatus(p){status=p;liveProfile=p.profile||{};schedule();},
-  setHistory(rows,at,live,archive){if(isLive!==live||(!live&&anchor!==at))pendingCenter=true;history=rows||[];anchor=at;isLive=live;archived=live?null:archive?.profile||{points:[]};savedAt=live?null:archive?.saved_at||null;selected=null;schedule();},
+  setHistory(rows,at,live,archive){const changed=isLive!==live||(!live&&anchor!==at);if(changed){pendingCenter=true;selected=null;}history=rows||[];anchor=at;isLive=live;archived=live?null:archive?.profile||{points:[]};savedAt=live?null:archive?.saved_at||null;schedule();},
   // Narrow observability for UI tests; data are already visible in the same UI.
   inspect(){return {start,end,zoom,visible:[...visible],series:drawn,anchor,isLive};}
  };
