@@ -334,6 +334,7 @@ class Diagnostic:
         injected_clock = now is not None
         now = now or datetime.now(timezone.utc)
         generation = self.output.snapshot()['revision']
+        meter_observation = None
         with self.lock:
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
@@ -359,6 +360,14 @@ class Diagnostic:
                         "po": describe_sensor(raw_po, self.options["po_entity"],
                                               now, self.options["max_age_seconds"]),
                     }
+                    fresh_sensors = [s for s in self.sensor_diagnostics.values() if s['health'] == 'FRESH']
+                    if fresh_sensors:
+                        meter_observation = {
+                            'meter_w': None, 'communication_healthy': True,
+                            'coverage': 'TWO_RECENT' if len(fresh_sensors) == 2 else 'ONE_RECENT',
+                            'reason': 'Communication gPlugK récente ; bilan à vérifier',
+                            'freshness_report': min(datetime.fromisoformat(s['reported_at']) for s in fresh_sensors),
+                        }
                     assessment = assess_grid_reading(
                         raw_pi, raw_po, now, self.options["max_age_seconds"])
                     meter_w = assessment["grid_w"]
@@ -387,6 +396,14 @@ class Diagnostic:
                     meter_w = measured.value
                     meter_report = measured.measured_at
                     freshness_report = measured.measured_at
+
+                # Preserve the meter diagnosis independently of later thermal
+                # or planner failures; it must still be recent when displayed.
+                meter_observation = {
+                    'meter_w': meter_w, 'communication_healthy': communication_healthy,
+                    'coverage': measurement_coverage, 'reason': measurement_reason,
+                    'freshness_report': freshness_report,
+                }
 
                 entity = self.options["boiler_temperature_entity"]
                 water_c = self.options["demo_water_c"]
@@ -485,22 +502,29 @@ class Diagnostic:
                         "simulated_boiler_w": round(decision.command_w),
                     })
             except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                if not injected_clock:
+                    now = datetime.now(timezone.utc)
                 self.regulator.invalid_data(str(exc))
                 self.water_temperature_c = None
+                report = meter_observation['freshness_report'] if meter_observation else None
+                meter_age = (now-report).total_seconds() if report is not None else None
+                meter_fresh = (meter_age is not None and -2 <= meter_age <= self.options['max_age_seconds'])
+                meter_ok = bool(meter_observation and meter_fresh and meter_observation['communication_healthy'])
+                retained_w = meter_observation['meter_w'] if meter_ok else None
                 self.comfort = {"status": "FAULT", "reason": str(exc)[:260],
                                 "backup_power_w": 0, "applied_boiler_w": 0,
                                 "gate_state": "FAULT", "physical_outputs": False}
                 self.latest = {
                     "status": "FAULT",
                     "error": str(exc)[:260],
-                    "data_quality": None,
-                    "communication_healthy": False,
-                    "measurement_coverage": "NONE",
+                    "data_quality": meter_observation['reason'] if meter_ok else None,
+                    "communication_healthy": meter_ok,
+                    "measurement_coverage": meter_observation['coverage'] if meter_ok else "NONE",
                     "updated_at": now.isoformat(),
-                    "meter_w": None,
+                    "meter_w": round(retained_w) if retained_w is not None else None,
                     "simulated_boiler_w": 0,
                     "simulated_grid_after_w": None,
-                    "meter_age_s": None,
+                    "meter_age_s": round(meter_age, 1) if meter_ok else None,
                     "simulation_state": "FAULT",
                 }
             try:
@@ -775,7 +799,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.7",
+            "version": "1.0.0-alpha.8",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
@@ -1076,8 +1100,17 @@ def handler_factory(diag: Diagnostic):
             except (OSError, sqlite3.Error):
                 self.send_error(503, "Operation failed; inspect output state")
                 return
-            except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
-                self.send_error(400, "Invalid JSON")
+            except (ValueError, TypeError, UnicodeError) as exc:
+                # Browser clients need the actual validation reason. JSON
+                # encoding keeps it data, never markup.
+                message = str(exc)[:240] or 'Requête invalide'
+                body = json.dumps({'error': message}, ensure_ascii=False).encode('utf-8')
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             body = b'{"ok":true}'
             self.send_response(200)

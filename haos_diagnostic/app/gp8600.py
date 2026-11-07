@@ -68,7 +68,8 @@ class SimulatedDAC:
         self.ready = False
 
     def snapshot(self):
-        return {"driver": self.kind, "communication": "SIMULATED" if self.ready else "FAULT",
+        status = "SIMULATED" if self.ready else ("FAULT" if self.error else "INACTIVE")
+        return {"driver": self.kind, "communication": status,
                 "ready": self.ready, "last_acknowledged_ma": self.last_ma,
                 "code": self.last_code, "error": self.error,
                 "physical_current_ma": None, "physical_current_measured": False}
@@ -131,7 +132,7 @@ class GP8600(SimulatedDAC):
         self.ready = False
 
     def snapshot(self):
-        return {**super().snapshot(), "communication": "ACK" if self.ready else "FAULT",
+        return {**super().snapshot(), "communication": "ACK" if self.ready else ("FAULT" if self.error else "INACTIVE"),
                 "bus": self.bus, "address": self.address}
 
 
