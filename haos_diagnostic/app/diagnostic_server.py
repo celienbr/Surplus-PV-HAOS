@@ -39,6 +39,7 @@ LOG = logging.getLogger("surplus_pv_diagnostic")
 MOBILE_INPUTS = Path(__file__).resolve().parent.parent / "web" / "inputs.html"
 PROFILE_VIEW = Path(__file__).resolve().parent.parent / "web" / "profile.html"
 BOILER_VIEW = Path(__file__).resolve().parent.parent / "web" / "boiler.html"
+CONFIG_VIEW = Path(__file__).resolve().parent.parent / "web" / "configuration.html"
 THEME_CSS = Path(__file__).resolve().parent.parent / "web" / "theme.css"
 THEME_JS = Path(__file__).resolve().parent.parent / "web" / "theme.js"
 HISTORY_JS = Path(__file__).resolve().parent.parent / "web" / "history.js"
@@ -566,21 +567,26 @@ class Diagnostic:
         if not isinstance(values, dict):
             raise ValueError('Expected command object')
         if values.get('action') == 'mode' and values.get('mode') in ('AUTO_REEL', 'MANUEL_REEL'):
+            if not self.options['boiler_temperature_entity']:
+                raise ValueError('Sonde réelle du boiler requise')
+            if values['mode'] == 'MANUEL_REEL':
+                self.output.command(values)
+                return
             with self.heartbeat.lock:
-                if not self.options['boiler_temperature_entity']:
-                    raise ValueError('Sonde réelle du boiler requise')
                 hb = self.heartbeat.snapshot()
                 if hb['state'] != 'NORMAL' or hb['driver'] != 'GPIO_REEL':
                     raise ValueError('Heartbeat GPIO réel sain requis')
                 self.output.command(values)
             return
         if values.get('action') == 'stop':
+            if set(values) != {'action'}:
+                raise ValueError('Unexpected stop fields')
             try:
-                self.heartbeat.stop()
-            except OSError:
-                # A failed GPIO deassertion must not prevent a best-effort DAC stop.
                 self.output.command(values)
-                raise
+            finally:
+                # Either interface may fail: always attempt both independent stops.
+                self.heartbeat.stop()
+            return
         self.output.command(values)
 
     def set_heartbeat(self, command):
@@ -603,6 +609,8 @@ class Diagnostic:
         if command['driver'] == 'simulated':
             output = SimulatedGPIO()
         elif command['driver'] == 'gpio17':
+            if self.output.snapshot()['mode'] == 'MANUEL_REEL':
+                raise ValueError('Arrêter MANUEL avant de démarrer le heartbeat')
             self.output.prepare_heartbeat()
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
@@ -619,7 +627,7 @@ class Diagnostic:
     def guard_output_once(self):
         self.output.check_freshness()
         self.heartbeat.progress('guard', healthy=self.output.error is None)
-        if (self.output.snapshot()['mode'] in ('AUTO_REEL', 'MANUEL_REEL')
+        if (self.output.snapshot()['mode'] == 'AUTO_REEL'
                 and self.heartbeat.snapshot()['state'] != 'NORMAL'):
             self.output.command({'action': 'stop'})
 
@@ -767,7 +775,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.6",
+            "version": "1.0.0-alpha.7",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
@@ -863,6 +871,9 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/boiler", "/boiler.html"):
                 body = BOILER_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
+            elif path in ("/configuration", "/configuration.html"):
+                body = CONFIG_VIEW.read_bytes()
+                content_type = "text/html; charset=utf-8"
             elif path == "/api/output":
                 body = json.dumps({**diag.output.snapshot(), "token": diag.weather_toggle_token},
                                   ensure_ascii=False, allow_nan=False).encode('utf-8')
@@ -889,7 +900,7 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/air_probe_chart.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/air_probe_chart.js", "/heartbeat.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":

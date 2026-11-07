@@ -4,6 +4,9 @@
  <div class="detail"><dl><dt>Importation Pi</dt><dd id="g-pi">—</dd><dt>Injection Po</dt><dd id="g-po">—</dd><dt>Bilan réseau signé</dt><dd id="g-grid">—</dd></dl>
  <p id="g-fresh">En attente du diagnostic.</p><p class="note">Communication confirmée si Pi OU Po présente un rapport récent. Une valeur zéro peut rester inchangée.</p></div></details>
 
+ <details class="card" id="card-boiler"><summary><span class="leading" data-icon="boiler" aria-hidden="true"></span><span class="card-body"><span class="card-title">Boiler</span><div class="card-sub">Température et commande</div><div class="at-glance" id="boiler-headline">— °C · état inconnu</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <div class="detail"><dl><dt>Température réelle de l’eau</dt><dd id="input-water">—</dd><dt>Température de consigne</dt><dd id="input-target">—</dd><dt>Mode</dt><dd id="input-mode">—</dd><dt>État demandé</dt><dd id="input-demand">—</dd><dt>Puissance demandée</dt><dd id="input-power">—</dd><dt>Puissance mesurée</dt><dd>Non disponible</dd><dt>État physique</dt><dd>Inconnu : aucun retour matériel</dd></dl></div></details>
+
  <details class="card" id="card-solar"><summary><span class="leading" data-icon="solar" aria-hidden="true"></span><span class="card-body"><span class="card-title">Forecast.Solar</span><div class="card-sub">Prévisions PV aujourd’hui et demain</div><span class="tag" id="pv-tag">Vérification…</span><div class="at-glance" id="pv-headline">Aujourd’hui — · demain —</div><div class="card-meta">Production prévue en kWh (non mesurée)</div></span><span class="arrow" aria-hidden="true">›</span></summary>
  <div class="detail"><dl><dt>PV restant aujourd’hui</dt><dd id="pv-today">—</dd><dt>PV prévu demain</dt><dd id="pv-tomorrow">—</dd></dl>
  <p id="pv-message">En attente des prévisions.</p><p class="note">Production prévue brute, pas surplus garanti après consommation.</p></div></details>
@@ -91,4 +94,4 @@
 <pre id="logs-view" hidden style="overflow:auto;white-space:pre-wrap;color:var(--ink);font-size:11px;max-height:320px"></pre>
 </div>
 </details></section>
-<footer>AUTO reste virtuel ; la commande MANUELLE dépend des protections configurées.</footer></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Accueil</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./#card-settings" class="nav-button">Paramètres</a></nav></body></html>
+<section id="boiler-commande" aria-label="Commande Boiler"><iframe id="boiler-frame" title="Commande complète du boiler" src="./boiler?embed=1" scrolling="no"></iframe></section><footer>Les consignes affichées ne confirment pas l’état physique du chauffage.</footer></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Accueil</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./configuration" class="nav-button">Configuration</a></nav></body></html>

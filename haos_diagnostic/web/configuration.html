@@ -1,0 +1,8 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Configuration</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script><script src="./heartbeat.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div><h1>Configuration technique</h1><p>Diagnostic et réglages du watchdog</p></div><div id="theme-slot"></div></header><section class="panel" id="heartbeat-panel"><h2>Heartbeat</h2>
+ <p>GPIO17 réel selon R6-S3. Vérifier le câblage, la polarité et le mode E Omron ; le matériel détermine le comportement au défaut.</p>
+ <label>Sortie <select id="hb-driver"><option value="simulated">Simulation</option><option value="gpio17">GPIO17 réel</option></select></label>
+ <label>Période en secondes <input id="hb-period" type="number" min="0.1" max="3600" value="10" step="0.1"></label>
+ <label>Durée en secondes <input id="hb-width" type="number" min="0.001" max="10" value="0.2" step="0.001"></label>
+ <button type="button" id="hb-start">Activer explicitement</button> <button type="button" id="hb-stop">Arrêter le heartbeat</button>
+ <p id="hb-state" role="status">Arrêt</p><p id="hb-error" role="alert"></p>
+</section><p>Les autres options techniques sont disponibles dans la configuration Home Assistant de l’application. <a href="./#card-settings">Paramètres utilisateur</a></p></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Accueil</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./configuration" class="nav-button">Configuration</a></nav></body></html>

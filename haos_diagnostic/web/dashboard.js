@@ -16,6 +16,21 @@ function tag(id,state,label){
 function render(p){
  currentData=p;
  const o=p.options||{},w=p.weather||{},s=p.sensors||{},prof=p.profile||{};
+ const output=p.output_control||{},mode=output.mode||'';
+ const manual=['MANUEL','MANUEL_REEL','MANUEL_BANC'].includes(mode);
+ const automatic=['AUTO_REEL','AUTO_BANC'].includes(mode);
+ const modeText=manual?'MANUEL':automatic?'AUTO':'ARRÊT';
+ const measuredAt=Date.parse(output.temperature_at||'');
+ const age=(Date.now()-measuredAt)/1000;
+ const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
+  Number.isFinite(age)&&age>=-2&&age<=(o.max_age_seconds??60);
+ const target=manual?output.target_c:(w.status==='ADAPTIVE'?w.target_c:o.demo_max_c);
+ text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
+ text('input-target',celsius(target));
+ text('input-mode',modeText);
+ text('input-demand',output.heat_requested?'Chauffe demandée':'Aucune chauffe demandée');
+ text('input-power',automatic?watts(output.auto_virtual_power_w):'Non disponible en W');
+ text('boiler-headline',(measured?celsius(output.temperature_c):'Température inconnue')+' · '+modeText);
  const today=typeof w.gross_today_remaining_kwh==="number"?w.gross_today_remaining_kwh:prof.daily_today_remaining_kwh;
  const tomorrow=typeof w.gross_tomorrow_kwh==="number"?w.gross_tomorrow_kwh:prof.daily_tomorrow_kwh;
  const tomorrowTemp=typeof w.pac_outdoor_tomorrow_c==="number"?w.pac_outdoor_tomorrow_c:prof.tomorrow_temperature_c;
@@ -172,8 +187,18 @@ async function update(){
  tag('grid-tag','bad','Données périmées');text('calc-protection','État inconnu');
  text('fallback-grid','Communication interface perdue · état non confirmé');
  tag('comfort-status','bad','Plan périmé');text('comfort-reason','Communication perdue : le plan affiché ne confirme pas l’état actuel.');
+ for(const id of ['input-water','input-target','input-mode','input-demand','input-power'])text(id,'Inconnu · connexion perdue');
+ text('boiler-headline','État inconnu · connexion perdue');
  }finally{updating=false;}
 }
 $('expand-all').onclick=()=>{expanded=!expanded;document.querySelectorAll('#page-inputs details').forEach(e=>e.open=expanded);text('expand-all',expanded?'Masquer les détails':'Voir les détails des entrées');};
 update();setInterval(update,5000);
 if(/\/profil(?:\.html)?$/.test(location.pathname)&&!location.hash)location.hash='profil';
+const boilerFrame=$('boiler-frame');
+boilerFrame.addEventListener('load',()=>{
+ try{
+  const doc=boilerFrame.contentDocument,main=doc.querySelector('main');
+  const resize=()=>{boilerFrame.style.height=Math.ceil(main.getBoundingClientRect().height+4)+'px';};
+  new ResizeObserver(resize).observe(main);resize();
+ }catch(e){boilerFrame.style.height='900px';}
+});

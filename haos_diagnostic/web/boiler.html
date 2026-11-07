@@ -1,4 +1,4 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Boiler</title><link rel="stylesheet" href="./theme.css"><script src="./theme.js"></script><script src="./ui.js" defer></script><script src="./output.js" defer></script><script src="./air_probe_chart.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header><section class="panel"><div class="section-heading"><span data-icon="boiler"></span><h2>Boiler</h2></div><p class="notice">Température selon la source indiquée · AUTO réel nécessite une activation explicite</p><div class="boiler-kpis"><article class="kpi"><small>Réseau réel signé</small><strong id="k-grid">—</strong></article><article class="kpi"><small id="water-source-label">Température non validée</small><strong id="k-temp">—</strong></article></div><div class="boiler-status"><span data-icon="boiler"></span><div><h3>Température et consigne</h3><p><strong id="demo-temp">—</strong> → plafond <strong id="target-temp">—</strong></p><div class="thermal-track"><div id="thermal-fill" class="thermal-fill"></div></div><p id="heat-state"></p><p>Limites configurées : <span id="boiler-limits">—</span></p></div></div><div class="decision"><strong id="grid-health">Connexion…</strong><p id="grid-detail"></p></div><div class="chart-controls"><button id="view-history" class="primary">Graphique unifié et historique</button></div><div class="decision"><strong id="comfort-state">Planification du confort en attente</strong><p id="comfort-details"></p></div><p class="muted">Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p><p class="statusline"><span id="conn-dot"></span><span id="conn-text" role="status"></span></p></section><section class="panel" aria-labelledby="air-probe-heading"><h2 id="air-probe-heading">Sonde hors boiler</h2><p id="air-probe-status" role="status">Connexion…</p><p>Température à l’air libre : <strong id="air-probe-value">—</strong></p><p id="air-probe-detail"></p><p>Cette sonde ne mesure pas l’eau et ne peut pas autoriser la chauffe. Vérifiez que la source Home Assistant ne simule pas la sonde.</p><canvas id="air-probe-chart" style="width:100%;height:180px" role="img" aria-label="Température de la sonde hors boiler pendant les dernières 48 heures"></canvas><p id="air-probe-history-status" role="status">Chargement de l’historique…</p></section><section class="panel" id="output-panel">
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Surplus PV · Boiler</title><link rel="stylesheet" href="./theme.css"><script>if(new URLSearchParams(location.search).has("embed"))document.documentElement.classList.add("embedded");</script><script src="./theme.js"></script><script src="./ui.js" defer></script><script src="./output.js" defer></script></head><body><main class="app boiler-page"><header class="head"><div class="brand"><span class="brand-icon" data-icon="house" aria-hidden="true"></span><div><h1>Surplus PV <span>Control</span></h1><p class="subtitle">Régulation prévisionnelle sur 48 h</p></div></div><div class="header-side"><div id="theme-slot"></div><p class="slogan"><span data-icon="leaf" aria-hidden="true"></span>Anticiper demain pour mieux utiliser le soleil aujourd'hui</p></div></header><section class="panel"><div class="section-heading"><span data-icon="boiler"></span><h2>Boiler</h2></div><p class="notice">Température selon la source indiquée · AUTO réel nécessite une activation explicite</p><div class="boiler-kpis"><article class="kpi"><small>Réseau réel signé</small><strong id="k-grid">—</strong></article><article class="kpi"><small id="water-source-label">Température non validée</small><strong id="k-temp">—</strong></article></div><div class="boiler-status"><span data-icon="boiler"></span><div><h3>Température et consigne</h3><p><strong id="demo-temp">—</strong> → plafond <strong id="target-temp">—</strong></p><div class="thermal-track"><div id="thermal-fill" class="thermal-fill"></div></div><p id="heat-state"></p><p>Limites configurées : <span id="boiler-limits">—</span></p></div></div><div class="decision"><strong id="grid-health">Connexion…</strong><p id="grid-detail"></p></div><div class="chart-controls"><button id="view-history" class="primary">Graphique unifié et historique</button></div><div class="decision"><strong id="comfort-state">Planification du confort en attente</strong><p id="comfort-details"></p></div><p class="muted">Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p><p class="statusline"><span id="conn-dot"></span><span id="conn-text" role="status"></span></p></section><section class="panel" id="output-panel">
  <h2>Commande Boiler et banc DAC</h2>
  <p id="output-driver" role="status">Connexion au pilote…</p>
  <label>Mode <select id="output-mode"><option value="AUTO">AUTO simulation</option><option value="AUTO_REEL">AUTO réel</option><option value="MANUEL_REEL">MANUEL réel</option><option value="MANUEL">MANUEL simulation</option><option value="MANUEL_BANC">MANUEL BANC</option><option value="AUTO_BANC">AUTO BANC</option><option value="BANC_DAC">BANC DAC</option></select></label>
@@ -6,6 +6,7 @@
   <label>Température de consigne °C <input id="manual-target" type="number" min="30" max="80" step="0.5" value="70"></label>
  <div id="manual-controls" hidden>
   <p>La cible est fixée à l’entrée en MANUEL. Température valide surveillée ; cible atteinte → AUTO.</p>
+  <p>La consigne MANUELLE est envoyée indépendamment du watchdog. La sélection physique de la source par l’Omron et K2 n’est pas mesurée.</p>
   <label>Puissance demandée <output id="manual-percent">0 %</output><input id="manual-power" type="range" min="0" max="100" step="1" value="0"></label>
   <p>La puissance réelle n'est pas calibrée. En mode réel, 0 % demande 0 mA ; cela ne constitue pas une coupure de sécurité.</p>
  </div>
@@ -29,14 +30,7 @@
  <button id="output-recover" type="button">Réinitialiser le DAC à zéro</button>
  <p id="output-state" role="status"></p><p id="output-error" role="alert"></p>
  <p>Le calcul conserve la planification de confort. Au redémarrage aucune consigne n’est reprise ; l’état physique peut être inconnu. Les protections indépendantes restent nécessaires.</p>
-</section><section class="panel" id="heartbeat-panel"><h2>Heartbeat</h2>
- <p>GPIO17 réel selon R6-S3. Vérifier le câblage, la polarité et le mode E Omron ; le matériel détermine le comportement au défaut.</p>
- <label>Sortie <select id="hb-driver"><option value="simulated">Simulation</option><option value="gpio17">GPIO17 réel</option></select></label>
- <label>Période en secondes <input id="hb-period" type="number" min="0.1" max="3600" value="10" step="0.1"></label>
- <label>Durée en secondes <input id="hb-width" type="number" min="0.001" max="10" value="0.2" step="0.001"></label>
- <button type="button" id="hb-start">Activer explicitement</button> <button type="button" id="hb-stop">Arrêter le heartbeat</button>
- <p id="hb-state" role="status">Arrêt</p><p id="hb-error" role="alert"></p>
-</section></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Accueil</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./#card-settings" class="nav-button">Paramètres</a></nav><script>
+</section></main><nav class="bottom" aria-label="Navigation"><a href="./#entrees" class="nav-button">Accueil</a><a href="./#profil" class="nav-button">Profil 48 h</a><a href="./boiler" class="nav-button">Boiler</a><a href="./configuration" class="nav-button">Configuration</a></nav><script>
 "use strict";
 const $=id=>document.getElementById(id);
 const good=n=>typeof n==="number"&&Number.isFinite(n);
@@ -45,18 +39,18 @@ const deg=n=>good(n)?n.toLocaleString("fr-CH",{maximumFractionDigits:1})+" °C":
 async function refresh(){
  try{
   const r=await fetch("./api/status",{cache:"no-store"});if(!r.ok)throw Error("HTTP "+r.status);
-  const p=await r.json(),o=p.options||{},w=p.weather||{},probe=p.air_probe||{};document.body.classList.remove("disconnected");
-  $("air-probe-status").textContent=probe.status==="CONNECTED"?"Sonde raccordée — hors boiler":"Sonde indisponible";
-  $("air-probe-value").textContent=deg(probe.temperature_c);
-  $("air-probe-detail").textContent="Identifiant : "+(probe.address||"non configuré")+" · Dernier rapport HA valide : "+(probe.last_valid_at?new Date(probe.last_valid_at).toLocaleString("fr-CH",{timeZone:"Europe/Zurich"}):"—")+(probe.reason?" · "+probe.reason:"");
+  const p=await r.json(),o=p.options||{},w=p.weather||{};document.body.classList.remove("disconnected");
   $("k-grid").textContent=watts(p.meter_w);
-  $("water-source-label").textContent=p.temperature_source==="HOME_ASSISTANT"?"Température lue dans HA":"Température renseignée (non mesurée)";
-  $("k-temp").textContent=deg(p.water_temperature_c);$("demo-temp").textContent=deg(p.water_temperature_c);
-  const target=p.output_control?.mode==="MANUEL"?p.output_control.target_c:(w.status==="ADAPTIVE"?w.target_c:o.demo_max_c);
+  const obs=p.output_control||{},age=(Date.now()-Date.parse(obs.temperature_at||''))/1000;
+  const real=p.temperature_source==="HOME_ASSISTANT",fresh=real&&good(obs.temperature_c)&&Number.isFinite(age)&&age>=-2&&age<=(o.max_age_seconds??60);
+  const temperature=real?(fresh?obs.temperature_c:null):p.water_temperature_c;
+  $("water-source-label").textContent=real?(fresh?"Température lue dans HA":"Température réelle inconnue") :"Température renseignée (non mesurée)";
+  $("k-temp").textContent=deg(temperature);$("demo-temp").textContent=deg(temperature);
+  const target=["MANUEL","MANUEL_REEL","MANUEL_BANC"].includes(p.output_control?.mode)?p.output_control.target_c:(w.status==="ADAPTIVE"?w.target_c:o.demo_max_c);
   $("target-temp").textContent=deg(target);$("boiler-limits").textContent=deg(o.weather_min_c)+" à "+deg(o.demo_max_c);
-  $("thermal-fill").style.width=Math.min(100,Math.max(0,100*(p.water_temperature_c??0)/Math.max(1,target)))+"%";
-  $("heat-state").textContent="Simulation : "+(p.simulation_state||"—")+
-   " · limite "+(w.status==="ADAPTIVE"?"météo calculée":"manuelle");
+  $("thermal-fill").style.width=Math.min(100,Math.max(0,100*(temperature??0)/Math.max(1,target)))+"%";
+  $("heat-state").textContent=(p.output_control?.heat_requested?"Chauffe demandée":"Aucune chauffe demandée")+
+   " · état physique inconnu · limite "+(w.status==="ADAPTIVE"?"météo calculée":"manuelle");
   $("grid-health").textContent=p.communication_healthy?"● Compteur connecté":"● Compteur à vérifier";
   $("grid-detail").textContent=p.data_quality||p.error||"Aucune mesure.";
   $("conn-dot").className="statusdot "+(p.communication_healthy?"ok":"warn");
@@ -66,9 +60,9 @@ async function refresh(){
   const instant=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}):'—';
   $("comfort-details").textContent="Minimum à "+instant(c.deadline)+" · dernier départ prudent "+instant(c.latest_start)+" · puissance totale en mode appoint (simulée) "+watts(c.backup_power_w)+" · appoint "+(o.grid_backup_enabled?'autorisé pour le minimum':'interdit')+".";
 
- }catch(err){$("air-probe-status").textContent="Connexion perdue — état de la sonde inconnu";$("air-probe-value").textContent="—";document.body.classList.add("disconnected");$("conn-dot").className="statusdot bad";$("conn-text").textContent=String(err);$("comfort-state").textContent="Plan périmé : communication perdue";}
+ }catch(err){document.body.classList.add("disconnected");$("conn-dot").className="statusdot bad";$("conn-text").textContent=String(err);$("comfort-state").textContent="Plan périmé : communication perdue";}
 }
-$("view-history").onclick=()=>location.href="./#profil";
+$("view-history").onclick=()=>{if(document.documentElement.classList.contains('embedded'))parent.location.href='./#profil';else location.href='./#profil';};
 
 refresh();setInterval(refresh,5000);
 </script></body></html>

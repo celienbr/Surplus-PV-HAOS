@@ -119,6 +119,7 @@ class HeartbeatService:
     def __init__(self):
         self.lock = RLock()
         self.heartbeat = None
+        self.pending_fault = None
 
     def start(self, output, required, **timing):
         with self.lock:
@@ -127,9 +128,15 @@ class HeartbeatService:
             heartbeat = Heartbeat(output, required, **timing)
             heartbeat.arm()
             self.heartbeat = heartbeat
+            self.pending_fault = None
 
     def progress(self, task, healthy=True):
-        with self.lock:
+        # A blocked GPIO ioctl must not stall the temperature or control loop.
+        if not self.lock.acquire(blocking=False):
+            if not healthy:
+                self.pending_fault = 'Défaut tâche critique : ' + task
+            return
+        try:
             hb = self.heartbeat
             if hb is None or hb.state in ('ARRET', 'DEFAUT'):
                 return
@@ -137,11 +144,18 @@ class HeartbeatService:
                 hb.fault('Défaut tâche critique : ' + task)
             else:
                 hb.progress(task)
+        finally:
+            self.lock.release()
 
     def tick(self):
         with self.lock:
             if self.heartbeat is not None:
-                self.heartbeat.tick()
+                if self.pending_fault is not None:
+                    reason, self.pending_fault = self.pending_fault, None
+                    if self.heartbeat.state not in ('ARRET', 'DEFAUT'):
+                        self.heartbeat.fault(reason)
+                else:
+                    self.heartbeat.tick()
 
     def stop(self):
         with self.lock:
