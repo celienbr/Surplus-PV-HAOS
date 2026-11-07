@@ -419,6 +419,10 @@ class Diagnostic:
                     simulated_after = None
                 else:
                     old_command = self.regulator.command_w
+                    # In physical AUTO the grid meter already includes the
+                    # actual load; in simulation it does not. Never add a
+                    # virtual load a second time to the real measurement.
+                    physical_auto = self.output.snapshot()['mode'] == 'AUTO_REEL'
                     limit = self.options["demo_max_c"]
                     reserve = self.options["target_export_w"]
                     weather_fresh = False
@@ -429,13 +433,14 @@ class Diagnostic:
                         reserve += self.options["weather_reserve_w"]
                     if self.weather_enabled and weather_fresh and self.weather["status"] == "ADAPTIVE":
                         limit = self.weather["target_c"]
-                    decision = self.regulator.step(meter_w + old_command, water_c,
+                    decision = self.regulator.step(meter_w if physical_auto else meter_w + old_command, water_c,
                                                    temp_limit_c=limit,
                                                    target_export_w=reserve)
                     if decision.state == "AUTO_READY_SIMULATION":
                         # No repeated correction on the same HA report.
                         surplus_command = decision.command_w if new_sample else old_command
-                        surplus_command = min(surplus_command, max(0, -meter_w-reserve))
+                        available = (old_command if physical_auto else 0) - meter_w - reserve
+                        surplus_command = min(surplus_command, max(0, available))
                         backup = self.comfort["backup_power_w"]
                         backup_ok = (self.options["grid_backup_enabled"] and backup > 0
                                      and water_c < self.options["weather_min_c"])
