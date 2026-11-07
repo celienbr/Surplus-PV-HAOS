@@ -1,8 +1,8 @@
 # Surplus PV — Canal de distribution Home Assistant OS
 
-Version 1.0.0-alpha.5 — mise à jour ARM64, simulation par défaut.
-GP8600 banc et MANUEL disponibles sur sélection explicite après validation physique.
-Mise à jour Home Assistant effectuée par le propriétaire ; aucun essai matériel validé.
+Version 1.0.0-alpha.6 — mise à jour ARM64, simulation par défaut.
+La liaison GP8600–CELDUC a été déclarée validée par le propriétaire ; les autres
+essais et l'inhibition matérielle restent à vérifier séparément.
 Conserve les acquisitions gPlugK et Sofar optionnelles.
 Dépôt : https://github.com/celienbr/Surplus-PV-HAOS
 

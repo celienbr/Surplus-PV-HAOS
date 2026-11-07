@@ -1,6 +1,6 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.5
+# Surplus PV — Home Assistant OS 1.0.0-alpha.6
 
-Version 1.0.0-alpha.5 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
+Version 1.0.0-alpha.6 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
 Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable.
 Tableau de bord : réseau gPlugK et prévisions. L'acquisition AC Sofar optionnelle
 fournit les index de production et l'autoconsommation conditionnelle. Sans configuration,
@@ -44,14 +44,15 @@ Cette sonde ne mesure pas l'eau et n'autorise pas la chauffe ; 85 °C est rejet�
 comme valeur de démarrage ambiguë. Les protections thermiques restent indépendantes.
 
 GP8600 réel : dac_driver=gp8600, dac_i2c_address=88..95, bus /dev/i2c-1.
-DAC 16 bits, 0–20 mA. Aucun GPIO, relais, K2 ou service HA de commande.
+DAC 16 bits, 0–20 mA. Le heartbeat utilise GPIO17 ; aucun service HA ne commande K2.
 dac_connection=bench : uniquement banc isolé sur résistance, jamais CELDUC.
-dac_connection=boiler : MANUEL possible avec température HA valide ; conversion
-4 + 16 × puissance / 100 mA, puissance non calibrée. 0 % = aucune demande de
-chauffe ; 4 mA ne constitue pas une isolation de sécurité. Les protections
-thermiques indépendantes restent nécessaires. Cible atteinte ou mesure invalide :
-retour AUTO et zéro envoyé. AUTO reste le régulateur virtuel alpha.3.
-Au redémarrage : AUTO, sortie zéro, aucune reprise des commandes précédentes.
+dac_connection=boiler : AUTO et MANUEL réels exigent sélection explicite,
+sonde réelle valide et heartbeat GPIO sain. Le courant 4–20 mA n'est pas une
+mesure de puissance ; la caractéristique automatique est provisoire. À l'arrêt
+ou à 0 % réel le logiciel demande zéro, mais une isolation matérielle de chauffe
+indépendante reste à confirmer. La commutation Omron mode E n'est pas instantanée.
+Au redémarrage : aucune consigne reprise ; la sortie physique reste inconnue
+tant que les circuits et leur état ne sont pas vérifiés.
 Erreur I²C : sortie inconnue, reprise explicite à zéro, aucune ancienne consigne
 rejouée. Une coupure logicielle n'est pas une coupure électrique indépendante.
 BANC DAC : curseur/saisie immédiats 0–20 mA, sortie activable ; aucune régulation,
@@ -61,12 +62,12 @@ linéaire proposée mais non appliquée sans revue des mesures et des extrémit�
 Résistance nominale 250 Ω ±1 %, ≥0,5 W : 20 mA donne 5 V et 0,1 W.
 La conformité de charge/alimentation et le montage isolé sont à vérifier en VAL.
 La communication I²C ne prouve aucune mesure physique. Simulation identifiée.
-Seul /dev/i2c-1 est exposé ; aucun privilège général ajouté. Le bus doit être
+Seuls /dev/i2c-1 et /dev/gpiochip0 sont exposés ; aucun privilège général ajouté. Le bus doit être
 activé dans HAOS par le propriétaire selon la documentation officielle avant
 un essai autorisé. Dockerfile inchangé : os/fcntl font partie de Python Linux.
 Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
 
-## Mise à jour depuis 1.0.0-alpha.4
+## Mise à jour depuis 1.0.0-alpha.5
 
 1. Dans Home Assistant, noter la version, le dépôt et l'identifiant exact de
    l'application installée. Conserver le dépôt et la même application.
@@ -81,11 +82,11 @@ Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.5, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.6, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.5, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.6, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Vérifier le signe import/export et la disponibilité des mesures. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
 
@@ -110,7 +111,7 @@ le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux résea
 récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
 silencieusement à zéro. Les nouvelles observations sont conservées dans une table
 SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-Publication logicielle 1.0.0-alpha.5 demandée par le propriétaire ; sauvegarde et mise
+Publication logicielle 1.0.0-alpha.6 demandée par le propriétaire ; sauvegarde et mise
 à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
 sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.

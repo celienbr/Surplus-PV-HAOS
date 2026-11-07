@@ -7,16 +7,16 @@
  function render(s){
   state=s;token=s.token||token;
   el('manual-target').max=s.thermal_ceiling_c;
-  if(s.mode==='MANUEL')el('manual-target').value=s.target_c;
+  if(['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode))el('manual-target').value=s.target_c;
   else if(Number(el('manual-target').value)>s.thermal_ceiling_c)el('manual-target').value=s.thermal_ceiling_c;
   el('output-driver').textContent=`Pilote ${s.dac.driver} · I²C ${s.dac.communication} · câblage ${s.connection} · dernier ACK ${fmt(s.dac.last_acknowledged_ma)} mA (consigne, pas mesure)`;
   el('output-mode').value=s.mode;
-  el('manual-controls').hidden=s.mode!=='MANUEL';
+  el('manual-controls').hidden=!['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
   el('bench-controls').hidden=s.mode!=='BANC_DAC';
-  el('manual-target').disabled=s.mode==='MANUEL';
+  el('manual-target').disabled=['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
   el('bench-enable').checked=s.mode==='BANC_DAC'&&s.enabled;
   el('bench-requested').textContent=fmt(s.requested_ma)+' mA';
-  el('output-state').textContent=s.reason+' · température surveillée '+fmt(s.temperature_c)+' °C'+(s.heat_requested?' · chauffe demandée':' · aucune chauffe demandée');
+  el('output-state').textContent=s.reason+' · température surveillée '+fmt(s.temperature_c)+' °C'+(s.heat_requested?' · chauffe demandée':' · aucune chauffe demandée')+(['AUTO_BANC','AUTO_REEL'].includes(s.mode)?` · demande calculée ${fmt(s.auto_virtual_power_w)} W · consigne ${fmt(s.requested_ma)} mA · caractéristique provisoire non qualifiée`: '');
   if(!editing&&!busy){
    el('manual-power').value=s.manual_percent;
    el('manual-percent').textContent=s.manual_percent+' %';
@@ -45,14 +45,28 @@
   catch(e){queue=[];el('output-error').textContent=String(e);}
   finally{busy=false;editing=false;await refresh();}
  }
- el('output-mode').onchange=()=>send({action:'mode',mode:el('output-mode').value,
-  target_c:Number(el('manual-target').value),isolated:el('bench-isolated').checked});
+ el('output-mode').onchange=()=>{const mode=el('output-mode').value;
+  if(mode!=='AUTO'&&!confirm(mode.endsWith('_REEL')?'Confirmer le pilotage réel ? La courbe de puissance et l’inhibition restent à qualifier.':'Confirmer ce changement de mode ? Vérifier le raccordement.')){render(state);return;}
+  send({action:'mode',mode,target_c:Number(el('manual-target').value),isolated:el('bench-isolated').checked,confirmed:true});};
  el('manual-power').oninput=()=>{editing=true;el('manual-percent').textContent=el('manual-power').value+' %';send({action:'manual',percent:Number(el('manual-power').value)});};
  function bench(){editing=true;send({action:'bench',enabled:el('bench-enable').checked,current_ma:Number(el('bench-current').value)});}
  el('bench-slider').oninput=()=>{el('bench-current').value=el('bench-slider').value;bench();};
  el('bench-current').oninput=()=>{el('bench-slider').value=el('bench-current').value;if(el('bench-current').value!==''&&el('bench-current').checkValidity())bench();};
  el('bench-enable').onchange=bench;
- el('output-recover').onclick=()=>send({action:'recover'});
+ el('output-recover').onclick=()=>{if(confirm('Confirmer la récupération à zéro ? La sortie physique doit être vérifiée.'))send({action:'recover',confirmed:true});};
+ el('output-stop').onclick=()=>send({action:'stop'});
+ async function heartbeatState(){
+  try{const r=await fetch('./api/heartbeat',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);
+   const s=await r.json();token=s.token||token;
+   el('hb-state').textContent=`${s.state} · ${s.driver||'désactivé'}${s.gpio===null||s.gpio===undefined?'':' · GPIO '+s.gpio} · dernière impulsion monotone ${fmt(s.last_pulse_monotonic)} s${s.reason?' · '+s.reason:''}`;
+  }catch(e){el('hb-error').textContent='État heartbeat inconnu : '+e;}
+ }
+ el('hb-start').onclick=async()=>{
+  if(!confirm('Confirmer l’activation du heartbeat sélectionné et les vérifications de raccordement ?'))return;
+  try{await post('./api/heartbeat',{action:'start',driver:el('hb-driver').value,confirm:true,period_s:Number(el('hb-period').value),width_s:Number(el('hb-width').value)});el('hb-error').textContent='';}
+  catch(e){el('hb-error').textContent=String(e);}finally{await heartbeatState();}
+ };
+ el('hb-stop').onclick=async()=>{try{await post('./api/heartbeat',{action:'stop'});el('hb-error').textContent='';}catch(e){el('hb-error').textContent=String(e);}finally{await heartbeatState();}};
  function preview(){
   const raw=el('bench-voltage').value,v=Number(raw),r=Number(el('bench-resistance').value);
   const valid=raw!==''&&Number.isFinite(v)&&r>0;
@@ -75,5 +89,5 @@
    await records();el('bench-voltage').value='';preview();
   }catch(e){el('output-error').textContent=String(e);}
  };
- refresh();records().catch(e=>{el('output-error').textContent=String(e);});setInterval(refresh,1000);
+ refresh();heartbeatState();records().catch(e=>{el('output-error').textContent=String(e);});setInterval(refresh,1000);setInterval(heartbeatState,1000);
 })();

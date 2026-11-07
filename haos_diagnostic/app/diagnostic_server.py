@@ -28,10 +28,12 @@ from .history_store import HistoryStore, parse_time
 from .air_probe import AirProbe
 from .energy_dashboard import EnergyDashboard, live_grid
 from .pv_actual import PVAcquisition
-from .gp8600 import make_dac
+from .gp8600 import make_dac, number
 from .output_control import OutputControl
 from .dac_calibration import CalibrationStore
 from .measurements import Measurement
+from .heartbeat import HeartbeatService, SimulatedGPIO
+from .gpio_v2 import GPIOOutput
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
 MOBILE_INPUTS = Path(__file__).resolve().parent.parent / "web" / "inputs.html"
@@ -269,7 +271,9 @@ class Diagnostic:
         self.client = client
         self.air_probe = AirProbe(self.options['air_probe_entity'], self.options['air_probe_address'],
                                   client, self.options['max_age_seconds'], history_store)
-        self.output = OutputControl(dac or make_dac(self.options), self.options['dac_connection'])
+        self.output = OutputControl(dac or make_dac(self.options), self.options['dac_connection'],
+                                    auto_timeout=self.options['max_age_seconds'], max_power=self.options['max_power_w'])
+        self.heartbeat = HeartbeatService()
         self.calibration = calibration_store or CalibrationStore()
         self._control_generation = self.output.revision
         self.refresh_control_temperature_once()
@@ -493,7 +497,14 @@ class Diagnostic:
                     "meter_age_s": None,
                     "simulation_state": "FAULT",
                 }
-            self.output.observe_auto(self.latest['simulated_boiler_w'], generation)
+            try:
+                self.output.observe_auto(self.latest['simulated_boiler_w'], generation,
+                    self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT'))
+            except (OSError, ValueError):
+                LOG.error('AUTO bench DAC failure; physical output unknown')
+            self.heartbeat.progress('main', healthy=(
+                self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT')
+                and self.output.error is None))
             result = self.snapshot()
         # Persistent recording is outside the regulator lock and never
         # participates in electrical decisions or causes a faulty command.
@@ -530,7 +541,7 @@ class Diagnostic:
             entity = self.options['boiler_temperature_entity']
             if entity and self.client is not None:
                 measurement = self.client.read_temperature_c(entity)
-            elif self.output.dac.kind == 'simulated':
+            elif self.output.dac.kind == 'simulated' or self.output.connection == 'bench':
                 measurement = Measurement(self.options['demo_water_c'], now)
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
             pass
@@ -541,16 +552,66 @@ class Diagnostic:
                                             self.options['max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
+        self.heartbeat.progress('thermal', healthy=(measurement is not None
+            and measurement.valid(now, self.options['max_age_seconds'])
+            and 0 <= measurement.value < self.options['demo_max_c']
+            and self.output.error is None))
 
     def set_output(self, values):
         if not isinstance(values, dict):
             raise ValueError('Expected command object')
+        if values.get('action') == 'mode' and values.get('mode') in ('AUTO_REEL', 'MANUEL_REEL'):
+            with self.heartbeat.lock:
+                if not self.options['boiler_temperature_entity']:
+                    raise ValueError('Sonde réelle du boiler requise')
+                hb = self.heartbeat.snapshot()
+                if hb['state'] != 'NORMAL' or hb['driver'] != 'GPIO_REEL':
+                    raise ValueError('Heartbeat GPIO réel sain requis')
+                self.output.command(values)
+            return
+        if values.get('action') == 'stop':
+            self.heartbeat.stop()
         self.output.command(values)
+
+    def set_heartbeat(self, command):
+        with self.heartbeat.lock:
+            self._set_heartbeat(command)
+
+    def _set_heartbeat(self, command):
+        if not isinstance(command, dict):
+            raise ValueError('Expected heartbeat command')
+        if command == {'action': 'stop'}:
+            self.heartbeat.stop()
+            return
+        if (set(command) != {'action', 'driver', 'confirm', 'period_s', 'width_s'}
+                or command['action'] != 'start' or command['confirm'] is not True):
+            raise ValueError('Explicit heartbeat confirmation required')
+        period = number(command['period_s'], .1, 3600)
+        width = number(command['width_s'], .001, period)
+        if width >= period or width > self.options['max_age_seconds'] or self.heartbeat.snapshot()['state'] != 'ARRET':
+            raise ValueError('Arrêter le heartbeat et vérifier sa temporisation')
+        if command['driver'] == 'simulated':
+            output = SimulatedGPIO()
+        elif command['driver'] == 'gpio17':
+            self.output.prepare_heartbeat()
+            output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
+        else:
+            raise ValueError('Unknown heartbeat output')
+        self.heartbeat.start(output, ['main', 'thermal', 'guard'],
+                             period=period, width=width,
+                             timeout=self.options['max_age_seconds'])
 
     def record_dac_measurement(self, values):
         # Lock prevents a setpoint change between capture and persistence.
         with self.output.lock:
             return self.calibration.record(self.output.snapshot(), values)
+
+    def guard_output_once(self):
+        self.output.check_freshness()
+        self.heartbeat.progress('guard', healthy=self.output.error is None)
+        if (self.output.snapshot()['mode'] in ('AUTO_REEL', 'MANUEL_REEL')
+                and self.heartbeat.snapshot()['state'] != 'NORMAL'):
+            self.output.command({'action': 'stop'})
 
     def refresh_weather_once(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
@@ -696,7 +757,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.5",
+            "version": "1.0.0-alpha.6",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
@@ -706,6 +767,7 @@ class Diagnostic:
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
             "physical_outputs": "SIMULATED" if self.output.dac.kind == "simulated" else "GP8600_EXPLICIT_SESSION",
             "output_control": self.output.snapshot(),
+            "heartbeat": self.heartbeat.snapshot(),
             "options": dict(self.options),
             **self.latest,
             "history": list(self.history),
@@ -793,6 +855,10 @@ def handler_factory(diag: Diagnostic):
                 content_type = "text/html; charset=utf-8"
             elif path == "/api/output":
                 body = json.dumps({**diag.output.snapshot(), "token": diag.weather_toggle_token},
+                                  ensure_ascii=False, allow_nan=False).encode('utf-8')
+                content_type = 'application/json; charset=utf-8'
+            elif path == "/api/heartbeat":
+                body = json.dumps({**diag.heartbeat.snapshot(), "token": diag.weather_toggle_token},
                                   ensure_ascii=False, allow_nan=False).encode('utf-8')
                 content_type = 'application/json; charset=utf-8'
             elif path == '/api/air-probe-history':
@@ -944,7 +1010,7 @@ def handler_factory(diag: Diagnostic):
         def do_POST(self):
             # Authenticated Ingress session. Only OutputControl can write the DAC.
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/weather-toggle", "/api/user-settings", "/api/output", "/api/dac-measurements"):
+            if path not in ("/api/weather-toggle", "/api/user-settings", "/api/output", "/api/dac-measurements", "/api/heartbeat"):
                 self.send_error(405, "No hardware/HA write operations")
                 return
             # HA ingress can remove or rewrite Sec-Fetch-Site and Host,
@@ -972,11 +1038,13 @@ def handler_factory(diag: Diagnostic):
                         self.send_error(400, "Expected enabled and token fields")
                         return
                     diag.set_weather_enabled(content["enabled"])
-                elif path in ('/api/output', '/api/dac-measurements'):
+                elif path in ('/api/output', '/api/dac-measurements', '/api/heartbeat'):
                     if set(content) != {'command', 'token'}:
                         raise ValueError('Expected command and token fields')
                     if path == '/api/output':
                         diag.set_output(content['command'])
+                    elif path == '/api/heartbeat':
+                        diag.set_heartbeat(content['command'])
                     else:
                         diag.record_dac_measurement(content['command'])
                 else:
@@ -1031,14 +1099,17 @@ def main():
     def guard_loop():
         while not stop.is_set():
             try:
-                diag.output.check_freshness()
+                diag.guard_output_once()
             except OSError:
                 LOG.error('DAC stop failure; physical output unknown')
+                diag.heartbeat.progress('guard', healthy=False)
             stop.wait(0.25)
     thermal_worker = Thread(target=thermal_loop, daemon=True)
     guard_worker = Thread(target=guard_loop, daemon=True)
+    heartbeat_worker = Thread(target=diag.heartbeat.run, args=(stop,), daemon=True)
     thermal_worker.start()
     guard_worker.start()
+    heartbeat_worker.start()
     worker = Thread(target=diag.loop, args=(stop,), daemon=True)
     worker.start()
     profile_worker = Thread(target=diag.profile_loop, args=(stop,), daemon=True)
@@ -1065,11 +1136,16 @@ def main():
         stop.set()
         server.server_close()
         try:
+            diag.heartbeat.stop()
+        except OSError:
+            LOG.error('Heartbeat GPIO stop failed; physical level unknown')
+        try:
             diag.output.close()
         except OSError:
             LOG.error('Shutdown DAC zero failed; independent isolation required')
         thermal_worker.join(timeout=2)
         guard_worker.join(timeout=2)
+        heartbeat_worker.join(timeout=2)
         calibration.close()
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
