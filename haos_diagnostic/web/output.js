@@ -55,18 +55,6 @@
  el('bench-enable').onchange=bench;
  el('output-recover').onclick=()=>{if(confirm('Confirmer la récupération à zéro ? La sortie physique doit être vérifiée.'))send({action:'recover',confirmed:true});};
  el('output-stop').onclick=()=>send({action:'stop'});
- async function heartbeatState(){
-  try{const r=await fetch('./api/heartbeat',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);
-   const s=await r.json();token=s.token||token;
-   el('hb-state').textContent=`${s.state} · ${s.driver||'désactivé'}${s.gpio===null||s.gpio===undefined?'':' · GPIO '+s.gpio} · dernière impulsion monotone ${fmt(s.last_pulse_monotonic)} s${s.reason?' · '+s.reason:''}`;
-  }catch(e){el('hb-error').textContent='État heartbeat inconnu : '+e;}
- }
- el('hb-start').onclick=async()=>{
-  if(!confirm('Confirmer l’activation du heartbeat sélectionné et les vérifications de raccordement ?'))return;
-  try{await post('./api/heartbeat',{action:'start',driver:el('hb-driver').value,confirm:true,period_s:Number(el('hb-period').value),width_s:Number(el('hb-width').value)});el('hb-error').textContent='';}
-  catch(e){el('hb-error').textContent=String(e);}finally{await heartbeatState();}
- };
- el('hb-stop').onclick=async()=>{try{await post('./api/heartbeat',{action:'stop'});el('hb-error').textContent='';}catch(e){el('hb-error').textContent=String(e);}finally{await heartbeatState();}};
  function preview(){
   const raw=el('bench-voltage').value,v=Number(raw),r=Number(el('bench-resistance').value);
   const valid=raw!==''&&Number.isFinite(v)&&r>0;
@@ -89,5 +77,5 @@
    await records();el('bench-voltage').value='';preview();
   }catch(e){el('output-error').textContent=String(e);}
  };
- refresh();heartbeatState();records().catch(e=>{el('output-error').textContent=String(e);});setInterval(refresh,1000);setInterval(heartbeatState,1000);
+ refresh();records().catch(e=>{el('output-error').textContent=String(e);});setInterval(refresh,1000);
 })();

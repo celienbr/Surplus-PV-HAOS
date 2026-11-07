@@ -1,5 +1,12 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.7 — candidat non publié
+
+- Configuration technique distincte pour le watchdog ; commande Boiler accessible depuis l'accueil.
+- Carte Boiler dans les entrées, avec distinction des demandes et de l'état physique inconnu.
+- Sonde hors boiler retirée de l'interface ; historique conservé.
+- MANUEL logiciel indépendant du watchdog ; la sélection matérielle reste à vérifier.
+
 ## 1.0.0-alpha.5 — candidat SW-006
 
 - Retrait des pages Énergie et diagnostic ; acquisitions, prévisions et historiques conservés.
