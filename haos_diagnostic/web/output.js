@@ -6,10 +6,19 @@
  const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(4):'—';
  function render(s){
   state=s;token=s.token||token;
+  const boiler=s.dac.driver==='gp8600'&&s.connection==='boiler';
+  for(const option of el('output-mode').options){
+   option.hidden=boiler&&['MANUEL','MANUEL_BANC','AUTO_BANC','BANC_DAC'].includes(option.value);
+   if(option.value==='AUTO')option.textContent=boiler?'ARRÊT / calcul simulé':'AUTO simulation';
+   if(option.value==='AUTO_REEL')option.textContent=boiler?'AUTO':'AUTO réel';
+   if(option.value==='MANUEL_REEL')option.textContent=boiler?'MANUEL':'MANUEL réel';
+  }
+  el('bench-confirmation').hidden=boiler;
   el('manual-target').max=s.thermal_ceiling_c;
   if(['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode))el('manual-target').value=s.target_c;
   else if(Number(el('manual-target').value)>s.thermal_ceiling_c)el('manual-target').value=s.thermal_ceiling_c;
-  el('output-driver').textContent=`Pilote ${s.dac.driver} · I²C ${s.dac.communication} · câblage ${s.connection} · dernier ACK ${fmt(s.dac.last_acknowledged_ma)} mA (consigne, pas mesure)`;
+  const communication=s.dac.communication==='INACTIVE'?'inactif — non initialisé':s.dac.communication;
+  el('output-driver').textContent=`Pilote ${s.dac.driver} · I²C ${communication} · câblage ${s.connection} · dernier ACK ${fmt(s.dac.last_acknowledged_ma)} mA (consigne, pas mesure)`;
   el('output-mode').value=s.mode;
   el('manual-controls').hidden=!['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
   el('bench-controls').hidden=s.mode!=='BANC_DAC';
@@ -32,7 +41,7 @@
  }
  async function post(url,command){
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,command})});
-  if(!r.ok)throw Error('Commande refusée (HTTP '+r.status+'). Vérifier mode, température, câblage et état I²C.');
+  if(!r.ok){let detail='';try{detail=(await r.json()).error||'';}catch(_e){}throw Error('Commande refusée (HTTP '+r.status+')'+(detail?' : '+detail:''));}
  }
  async function send(command){
   // Coalesce only sliders of the same type; mode barriers await the current write.

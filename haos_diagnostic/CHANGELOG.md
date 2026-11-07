@@ -1,5 +1,11 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.8 — candidat non publié
+
+- Diagnostic de communication gPlugK séparé des erreurs thermiques et de régulation.
+- DAC non initialisé indiqué comme inactif ; erreurs et refus explicités.
+- Interface Boiler simplifiée pour le raccordement configuré `boiler`.
+
 ## 1.0.0-alpha.7 — candidat non publié
 
 - Configuration technique distincte pour le watchdog ; commande Boiler accessible depuis l'accueil.
