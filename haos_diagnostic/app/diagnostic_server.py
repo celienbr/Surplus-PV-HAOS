@@ -579,6 +579,8 @@ class Diagnostic:
                 self.output.command(values)
             return
         if values.get('action') == 'stop':
+            if set(values) != {'action'}:
+                raise ValueError('Unexpected stop fields')
             try:
                 self.output.command(values)
             finally:
