@@ -1,6 +1,6 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.10
+# Surplus PV — Home Assistant OS 1.0.0-alpha.11
 
-Version 1.0.0-alpha.10 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
+Version 1.0.0-alpha.11 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
 Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable.
 Tableau de bord : réseau gPlugK et prévisions. L'acquisition AC Sofar optionnelle
 fournit les index de production et l'autoconsommation conditionnelle. Sans configuration,
@@ -44,6 +44,25 @@ nouveau contrôle physique. Ne désactiver l'automatisation HA de 15 s que
 lorsque le fonctionnement du nouvel appel est constaté dans les journaux
 et l'horodatage `last_reported`.
 
+### Correction de surveillance de la sonde — alpha.11
+
+L'application réutilise pour la régulation la même mesure réelle déjà validée
+par la boucle de protection thermique. Un second GET Home Assistant dans la
+régulation n'est plus nécessaire. Dans l'écran Boiler, consulter la ligne
+« Sonde » : statut FRESH/STALE/FUTURE/UNAVAILABLE, valeur reçue, âge du rapport,
+résultat de la dernière action HA et raison de rejet. Le journal utilise la
+température réelle et non la démonstration. La fraîcheur de l'écran Boiler
+est maintenant celle de la sonde (60 secondes), non du compteur réseau.
+
+Conserver la configuration alpha.10 existante (active refresh 15 s si activé).
+Le service update_entity ne peut garantir une acquisition physique de la
+DS18B20. Si l'intégration Home Assistant ne fournit pas de mesure
+récente, l'application **refuse toujours la chauffe** : le correctif ne
+fabrique ni température ni horodatage et n'efface pas le défaut du heartbeat.
+L'état NORMAL GPIO17/Omron/K2 doit être validé séparément et ne doit pas être
+forcé par le logiciel. Les réserves matérielles B01–B10 restent ouvertes.
+
+
 Le heartbeat dépend des boucles thermique et de garde DAC ; un compteur perdu
 ne valide pas une consigne AUTO ancienne. Aucun appoint autonome n'est créé en
 cas de perte du compteur. Atteindre le plafond inhibe la demande de chauffe.
@@ -75,7 +94,7 @@ activé dans HAOS par le propriétaire selon la documentation officielle avant
 un essai autorisé. Dockerfile inchangé : os/fcntl font partie de Python Linux.
 Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
 
-## Mise à jour depuis 1.0.0-alpha.9
+## Mise à jour depuis 1.0.0-alpha.10
 
 1. Dans Home Assistant, noter la version, le dépôt et l'identifiant exact de
    l'application installée. Conserver le dépôt et la même application.
@@ -90,11 +109,11 @@ Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.10, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.11, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.10, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.11, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Vérifier le signe import/export et la disponibilité des mesures. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
 
@@ -119,7 +138,7 @@ le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux résea
 récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
 silencieusement à zéro. Les nouvelles observations sont conservées dans une table
 SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-Publication logicielle 1.0.0-alpha.10 demandée par le propriétaire ; sauvegarde et mise
+Publication logicielle 1.0.0-alpha.11 demandée par le propriétaire ; sauvegarde et mise
 à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
 sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.
