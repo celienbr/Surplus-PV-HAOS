@@ -142,7 +142,7 @@ class HeartbeatService:
                 return
             if not healthy:
                 hb.fault('Défaut tâche critique : ' + task)
-            else:
+            elif task in hb.tasks:
                 hb.progress(task)
         finally:
             self.lock.release()

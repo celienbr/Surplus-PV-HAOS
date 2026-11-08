@@ -2,24 +2,32 @@
 "use strict";
 (()=>{
  const el=id=>document.getElementById(id);
- let state=null,token=null,busy=false,queue=[],editing=false;
+ let state=null,token=null,busy=false,queue=[],editing=false,selectingMode=false;
+ const modeSelect=el('output-mode');
  const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(4):'—';
+ // Do not mutate the native picker while it is open (especially on mobile Ingress).
+ function paintMode(s,boiler,force=false){
+  if(selectingMode&&!force)return;
+  for(const option of modeSelect.options){
+   const hidden=boiler&&['MANUEL','MANUEL_BANC','AUTO_BANC','BANC_DAC'].includes(option.value);
+   if(option.hidden!==hidden)option.hidden=hidden;
+   const label=option.value==='AUTO'?(boiler?'ARRÊT / calcul simulé':'AUTO simulation'):
+    option.value==='AUTO_REEL'?(boiler?'AUTO':'AUTO réel'):
+    option.value==='MANUEL_REEL'?(boiler?'MANUEL':'MANUEL réel'):null;
+   if(label!==null&&option.textContent!==label)option.textContent=label;
+  }
+  if(modeSelect.value!==s.mode)modeSelect.value=s.mode;
+ }
  function render(s){
   state=s;token=s.token||token;
   const boiler=s.dac.driver==='gp8600'&&s.connection==='boiler';
-  for(const option of el('output-mode').options){
-   option.hidden=boiler&&['MANUEL','MANUEL_BANC','AUTO_BANC','BANC_DAC'].includes(option.value);
-   if(option.value==='AUTO')option.textContent=boiler?'ARRÊT / calcul simulé':'AUTO simulation';
-   if(option.value==='AUTO_REEL')option.textContent=boiler?'AUTO':'AUTO réel';
-   if(option.value==='MANUEL_REEL')option.textContent=boiler?'MANUEL':'MANUEL réel';
-  }
+  paintMode(s,boiler);
   el('bench-confirmation').hidden=boiler;
   el('manual-target').max=s.thermal_ceiling_c;
   if(['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode))el('manual-target').value=s.target_c;
   else if(Number(el('manual-target').value)>s.thermal_ceiling_c)el('manual-target').value=s.thermal_ceiling_c;
   const communication=s.dac.communication==='INACTIVE'?'inactif — non initialisé':s.dac.communication;
   el('output-driver').textContent=`Pilote ${s.dac.driver} · I²C ${communication} · câblage ${s.connection} · dernier ACK ${fmt(s.dac.last_acknowledged_ma)} mA (consigne, pas mesure)`;
-  el('output-mode').value=s.mode;
   el('manual-controls').hidden=!['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
   el('bench-controls').hidden=s.mode!=='BANC_DAC';
   el('manual-target').disabled=['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
@@ -51,11 +59,22 @@
   if(busy)return;
   busy=true;el('output-error').textContent='';
   try{while(queue.length){const next=queue.shift();await post('./api/output',next);}}
-  catch(e){queue=[];el('output-error').textContent=String(e);}
+  catch(e){queue=[];el('output-error').textContent=String(e);if(state)paintMode(state,state.dac.driver==='gp8600'&&state.connection==='boiler',true);}
   finally{busy=false;editing=false;await refresh();}
  }
- el('output-mode').onchange=()=>{const mode=el('output-mode').value;
-  if(mode!=='AUTO'&&!confirm(mode.endsWith('_REEL')?'Confirmer le pilotage réel ? La courbe de puissance et l’inhibition restent à qualifier.':'Confirmer ce changement de mode ? Vérifier le raccordement.')){render(state);return;}
+ // Pointer/touch/focus cover native Android, iOS and keyboard selectors.
+ modeSelect.addEventListener('focus',()=>{selectingMode=true;});
+ modeSelect.addEventListener('pointerdown',()=>{selectingMode=true;});
+ modeSelect.addEventListener('touchstart',()=>{selectingMode=true;},{passive:true});
+ modeSelect.addEventListener('blur',()=>{
+  selectingMode=false;
+  // A blur can precede change: synchronize after the native event sequence.
+  setTimeout(()=>{if(!selectingMode&&!busy&&state)paintMode(state,state.dac.driver==='gp8600'&&state.connection==='boiler');},0);
+ });
+ modeSelect.onchange=()=>{selectingMode=false;const mode=modeSelect.value;
+  if(mode!=='AUTO'&&!confirm(mode.endsWith('_REEL')?'Confirmer le pilotage réel ? La courbe de puissance et l’inhibition restent à qualifier.':'Confirmer ce changement de mode ? Vérifier le raccordement.')){
+   paintMode(state,state.dac.driver==='gp8600'&&state.connection==='boiler',true);return;
+  }
   send({action:'mode',mode,target_c:Number(el('manual-target').value),isolated:el('bench-isolated').checked,confirmed:true});};
  el('manual-power').oninput=()=>{editing=true;el('manual-percent').textContent=el('manual-power').value+' %';send({action:'manual',percent:Number(el('manual-power').value)});};
  function bench(){editing=true;send({action:'bench',enabled:el('bench-enable').checked,current_ma:Number(el('bench-current').value)});}

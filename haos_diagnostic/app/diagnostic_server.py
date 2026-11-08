@@ -56,6 +56,7 @@ def parse_options(source: dict) -> dict:
         "po_entity": "sensor.gplugk_z_po",
         "sample_seconds": int(source.get("sample_seconds", 10)),
         "max_age_seconds": int(source.get("max_age_seconds", 60)),
+        "boiler_temperature_max_age_seconds": int(source.get("boiler_temperature_max_age_seconds", 60)),
         "demo_water_c": float(source.get("demo_water_c", 45)),
         "demo_max_c": float(source.get("demo_max_c", 70)),
         "target_export_w": float(source.get("target_export_w", 100)),
@@ -108,6 +109,8 @@ def parse_options(source: dict) -> dict:
         raise ValueError("Invalid sample period")
     if not 10 <= options["max_age_seconds"] <= 300:
         raise ValueError("Invalid max age")
+    if not 10 <= options["boiler_temperature_max_age_seconds"] <= 300:
+        raise ValueError("Invalid boiler temperature max age")
     if not 0 <= options["demo_water_c"] <= 90:
         raise ValueError("Invalid demonstration temperature")
     if not 40 <= options["demo_max_c"] <= 80:
@@ -411,7 +414,7 @@ class Diagnostic:
                     temperature = self.client.read_temperature_c(entity)
                     if not injected_clock:
                         now = datetime.now(timezone.utc)
-                    if not temperature.valid(now, self.options["max_age_seconds"]):
+                    if not temperature.valid(now, self.options["boiler_temperature_max_age_seconds"]):
                         raise ValueError("Boiler temperature stale or future-dated")
                     water_c = temperature.value
                 # Recheck meter freshness after any slow temperature request.
@@ -532,9 +535,12 @@ class Diagnostic:
                     self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT'))
             except (OSError, ValueError):
                 LOG.error('AUTO bench DAC failure; physical output unknown')
-            self.heartbeat.progress('main', healthy=(
-                self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT')
-                and self.output.error is None))
+            # Progress is a liveness report, not an aggregate sensor-health
+            # flag. An invalid AUTO calculation has already been inhibited by
+            # observe_auto; MANUEL does not depend on the grid meter at all.
+            # The independent thermal and guard tasks still report their own
+            # failures and a blocked poll cannot refresh this timestamp.
+            self.heartbeat.progress('main', healthy=self.output.error is None)
             result = self.snapshot()
         # Persistent recording is outside the regulator lock and never
         # participates in electrical decisions or causes a faulty command.
@@ -579,12 +585,12 @@ class Diagnostic:
             now = datetime.now(timezone.utc)
         try:
             self.output.observe_temperature(measurement, self.options['demo_max_c'],
-                                            self.options['max_age_seconds'], now)
+                                            self.options['boiler_temperature_max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
         self.heartbeat.progress('thermal', healthy=(measurement is not None
-            and measurement.valid(now, self.options['max_age_seconds'])
-            and 0 <= measurement.value < self.options['demo_max_c']
+            and measurement.valid(now, self.options['boiler_temperature_max_age_seconds'])
+            and 0 <= measurement.value <= 90
             and self.output.error is None))
 
     def set_output(self, values):
@@ -639,7 +645,9 @@ class Diagnostic:
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
             raise ValueError('Unknown heartbeat output')
-        self.heartbeat.start(output, ['main', 'thermal', 'guard'],
+        # Meter polling can block on HA independently of the thermal and DAC
+        # protection loops. AUTO's expiring command is enforced by guard.
+        self.heartbeat.start(output, ['thermal', 'guard'],
                              period=period, width=width,
                              timeout=self.options['max_age_seconds'])
 
@@ -758,7 +766,7 @@ class Diagnostic:
                               self.migrated_forecast_solar_entry_id)
             self.options = proposed
             self.output.observe_temperature(self.output.temperature, proposed['demo_max_c'],
-                                            proposed['max_age_seconds'])
+                                            proposed['boiler_temperature_max_age_seconds'])
             self._last_meter_report = None
             self.comfort = {"status": "WAITING", "reason": "Réglages modifiés ; nouveau calcul attendu.",
                             "backup_power_w": 0, "applied_boiler_w": 0, "physical_outputs": False}
@@ -799,7 +807,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.8",
+            "version": "1.0.0-alpha.9",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
