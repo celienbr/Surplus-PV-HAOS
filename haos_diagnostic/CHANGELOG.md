@@ -1,5 +1,11 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.12 — lecture thermique et jauge de consigne
+
+- Lecture de la température, unité et date de rapport via le modèle HA vivant ; échec fermé si la réponse est indisponible ou invalide. Les droits et la sonde doivent être vérifiés sur l’installation.
+- Jauge informative de la puissance demandée, avec identification simulation et banc ; état physique non vérifié.
+- Conservation des limites thermiques, du heartbeat, des options et des données.
+
 ## 1.0.0-alpha.11 — correctif de surveillance thermique, 08.11.2026
 
 - Une seule mesure horodatée validée par la boucle thermique est réutilisée par le calcul

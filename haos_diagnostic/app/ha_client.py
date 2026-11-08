@@ -122,12 +122,50 @@ class HomeAssistantClient:
         return net_grid_power_w(import_state, export_state)
 
     def read_temperature_c(self, entity_id: str):
-        state = self.get_state(entity_id)
-        unit = state.get("attributes", {}).get("unit_of_measurement")
-        # HA generally reports °C; do not silently convert Fahrenheit.
+        """Read the live HA State.last_reported, not cached REST JSON.
+
+        /api/states/<entity> serializes State.as_dict_json, which can retain
+        the previous report timestamp when HA receives unchanged sensor data.
+        /api/template resolves the current State object at render time.
+        The rendering is fixed and the sensor id strictly allowlisted; neither
+        a user template nor any equipment-control service can be invoked.
+        """
+        if (not isinstance(entity_id, str) or not entity_id.startswith("sensor.")
+                or not all(ch.isalnum() or ch in "._" for ch in entity_id)):
+            raise ValueError("Expected a valid boiler sensor.* entity ID")
+        # Only fixed attributes; no untrusted Jinja expression fragments.
+        # JSON escaping provides a quoted, non-executable entity identifier.
+        template = (
+            "{% set probe = states[" + json.dumps(entity_id) + "] %}"
+            "{{ {'state': probe.state,"
+            " 'attributes': {'unit_of_measurement': "
+            "probe.attributes.get('unit_of_measurement')},"
+            " 'last_reported': probe.last_reported.isoformat(),"
+            " 'last_updated': probe.last_updated.isoformat()} | to_json }}"
+        )
+        payload = json.dumps({"template": template}).encode("utf-8")
+        request = urllib.request.Request(
+            self._base_url + "/template", data=payload, method="POST",
+            headers={
+                "Authorization": "Bearer " + self._token,
+                "Content-Type": "application/json",
+            },
+        )
+        # Fail closed on timeouts, denied template rendering or malformed data.
+        with urllib.request.urlopen(request, timeout=4) as response:
+            state = json.loads(response.read(65536).decode("utf-8"))
+        if not isinstance(state, dict):
+            raise ValueError("Invalid Home Assistant live boiler response")
+        attributes = state.get("attributes")
+        if not isinstance(attributes, dict):
+            raise ValueError("Invalid Home Assistant boiler attributes")
+        unit = attributes.get("unit_of_measurement")
         if unit != "°C":
             raise ValueError(f"Temperature unit must be °C, got {unit!r}")
-        # HA last_reported can advance on an unchanged temperature; it still
-        # proves only an HA report, not the physical sensor acquisition time.
-        return parse_ha_number({**state, "last_updated": state.get("last_reported")
-                                or state.get("last_updated")}, expected_unit="°C")
+        # Do NOT fall back to stale last_updated if last_reported is missing:
+        # we have specifically requested a live HA state report timestamp.
+        stamp = state.get("last_reported")
+        if not isinstance(stamp, str) or not stamp:
+            raise ValueError("Missing live Home Assistant boiler last_reported")
+        self.temperature_read_source = "HA_TEMPLATE_LIVE_LAST_REPORTED"
+        return parse_ha_number({**state, "last_updated": stamp}, expected_unit="°C")

@@ -215,7 +215,7 @@ class OutputControl:
     def snapshot(self):
         with self.lock:
             return {"mode": self.mode, "revision": self.revision,
-                    "enabled": self.enabled, "requested_ma": self.requested_ma,
+                    "enabled": self.enabled, "requested_ma": self.requested_ma, "max_power_w": self.max_power,
                     "manual_percent": self.manual_percent, "target_c": self.target_c,
                     "heat_requested": ((self.mode in ("MANUEL", "MANUEL_REEL") and self.manual_percent > 0)
                                        or (self.mode == "AUTO_REEL" and self.auto_power_w > 0)) and self.enabled,
