@@ -33,7 +33,9 @@
   el('manual-target').disabled=['MANUEL','MANUEL_BANC','MANUEL_REEL'].includes(s.mode);
   el('bench-enable').checked=s.mode==='BANC_DAC'&&s.enabled;
   el('bench-requested').textContent=fmt(s.requested_ma)+' mA';
-  el('output-state').textContent=s.reason+' · température surveillée '+fmt(s.temperature_c)+' °C'+(s.heat_requested?' · chauffe demandée':' · aucune chauffe demandée')+(['AUTO_BANC','AUTO_REEL'].includes(s.mode)?` · demande calculée ${fmt(s.auto_virtual_power_w)} W · consigne ${fmt(s.requested_ma)} mA · caractéristique provisoire non qualifiée`: '');
+  const thermal=s.boiler_temperature_diagnostic||{};
+  const thermalDetail=thermal.entity?(' · sonde '+thermal.status+' · âge '+(Number.isFinite(thermal.age_s)?thermal.age_s.toFixed(1)+' s':'—')+' · '+(thermal.reason||'')):'';
+  el('output-state').textContent=s.reason+' · température surveillée '+fmt(s.temperature_c)+' °C'+thermalDetail+(s.heat_requested?' · chauffe demandée':' · aucune chauffe demandée')+(['AUTO_BANC','AUTO_REEL'].includes(s.mode)?` · demande calculée ${fmt(s.auto_virtual_power_w)} W · consigne ${fmt(s.requested_ma)} mA · caractéristique provisoire non qualifiée`: '');
   if(!editing&&!busy){
    el('manual-power').value=s.manual_percent;
    el('manual-percent').textContent=s.manual_percent+' %';
