@@ -1,5 +1,19 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.11 — correctif de surveillance thermique, 08.11.2026
+
+- Une seule mesure horodatée validée par la boucle thermique est réutilisée par le calcul
+  de confort et la régulation ; suppression du second GET pouvant diverger.
+- Périmée (>60 s), future (<-2 s), indisponible ou hors plage : inhibition
+  maintenue ; le heartbeat thermique garde son défaut mémorisé.
+- Diagnostic visible sur Boiler : entité, état, âge du rapport HA, horodatage,
+  résultat du service HA update_entity et raison de rejet.
+- Correction de la limite d'âge affichée dans Boiler : celle de la sonde,
+  et non celle du compteur réseau. Journal : température réelle au lieu de « demo 45 ».
+- Aucune extension du délai, aucun GPIO ou DAC activé, aucun accès 1-Wire direct.
+- Essais logiciel CI et HAOS/ARM64 requis ; absence de mesure HA lors d'une
+  panne d'intégration 1-Wire reste une cause d'inhibition légitime.
+
 ## 1.0.0-alpha.10 — candidat de publication, 08.11.2026
 
 - Surplus PV peut demander lui-même le rafraîchissement de l'entité
