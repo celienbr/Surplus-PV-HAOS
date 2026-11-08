@@ -20,6 +20,7 @@
  }
  function render(s){
   state=s;token=s.token||token;
+  window.renderPowerGauge(s);
   const boiler=s.dac.driver==='gp8600'&&s.connection==='boiler';
   paintMode(s,boiler);
   el('bench-confirmation').hidden=boiler;
@@ -47,7 +48,7 @@
  async function refresh(){
   if(busy)return;
   try{const r=await fetch('./api/output',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const s=await r.json();if(!busy&&(!state||s.revision>=state.revision))render(s);}
-  catch(e){el('output-error').textContent='Communication perdue : '+e;el('output-state').textContent='État de sortie inconnu';}
+  catch(e){window.renderPowerGauge(null);el('output-error').textContent='Communication perdue : '+e;el('output-state').textContent='État de sortie inconnu';}
  }
  async function post(url,command){
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,command})});

@@ -288,6 +288,7 @@ class Diagnostic:
         self._control_generation = self.output.revision
         self._next_boiler_refresh_monotonic = 0.0
         self._boiler_refresh_result = "NOT_ATTEMPTED"
+        self._boiler_refresh_error = None
         self._boiler_refresh_at = None
         self.boiler_temperature_diagnostic = {
             "entity": self.options['boiler_temperature_entity'],
@@ -620,9 +621,11 @@ class Diagnostic:
                         try:
                             self.client.request_boiler_temperature_refresh(entity)
                             self._boiler_refresh_result = 'HA_REQUEST_OK_NOT_PHYSICAL_PROOF'
+                            self._boiler_refresh_error = None
                         except (OSError, ValueError, RuntimeError, TypeError,
                                 AttributeError) as error:
                             self._boiler_refresh_result = 'HA_REQUEST_FAILED'
+                            self._boiler_refresh_error = str(error)[:160]
                             LOG.warning('Boiler HA update_entity request failed: %s', error)
                 measurement = self.client.read_temperature_c(entity)
             elif self.output.dac.kind == 'simulated' or self.output.connection == 'bench':
@@ -653,11 +656,14 @@ class Diagnostic:
             reason = 'Recent HA report; physical conversion not proven'
         self.boiler_temperature_diagnostic = {
             'entity': entity or None, 'status': status, 'reason': reason,
+            'source': ('HA_TEMPLATE_LIVE_LAST_REPORTED' if entity and self.client is not None
+                       else 'SIMULATION' if measurement is not None else None),
             'value_c': measurement.value if measurement is not None else None,
             'report_at': (measurement.measured_at.isoformat()
                           if measurement is not None else None),
             'age_s': round(age, 1) if age is not None else None,
             'refresh_result': self._boiler_refresh_result,
+            'refresh_error': self._boiler_refresh_error,
             'refresh_at': self._boiler_refresh_at,
             'max_age_s': self.options['boiler_temperature_max_age_seconds'],
         }
@@ -894,7 +900,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.11",
+            "version": "1.0.0-alpha.12",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
@@ -1024,7 +1030,7 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/air_probe_chart.js", "/heartbeat.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/power-gauge.js", "/air_probe_chart.js", "/heartbeat.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":
