@@ -1,6 +1,6 @@
 name: "Surplus PV - Diagnostic (sans puissance)"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.9"
+version: "1.0.0-alpha.10"
 description: "AUTO virtuel, GP8600 explicite en banc ou manuel Boiler"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -27,6 +27,8 @@ options:
   sample_seconds: 10
   max_age_seconds: 60
   boiler_temperature_max_age_seconds: 60
+  boiler_temperature_refresh_enabled: false
+  boiler_temperature_refresh_seconds: 15
   demo_water_c: 45
   demo_max_c: 70
   target_export_w: 100
@@ -78,6 +80,8 @@ schema:
   sample_seconds: "int(5,60)"
   max_age_seconds: "int(10,300)"
   boiler_temperature_max_age_seconds: "int(10,300)"
+  boiler_temperature_refresh_enabled: bool
+  boiler_temperature_refresh_seconds: "int(10,120)"
   demo_water_c: "float(0,90)"
   demo_max_c: "float(40,80)"
   target_export_w: "int(0,2000)"

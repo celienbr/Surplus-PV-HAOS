@@ -1,4 +1,4 @@
-"""READ-ONLY access to the local Home Assistant REST API."""
+"""Read HA state and use strictly allowlisted, non-output HA query actions."""
 import json
 import urllib.error
 import urllib.parse
@@ -84,6 +84,28 @@ class HomeAssistantClient:
         if not isinstance(series, dict) or not isinstance(series.get("watts"), dict):
             raise ValueError("Forecast.Solar service response lacks watts")
         return series
+
+    def request_boiler_temperature_refresh(self, entity_id: str):
+        """Ask HA to poll only the configured boiler sensor; never control equipment.
+
+        This HA service request does NOT prove a new physical 1-Wire conversion.
+        A subsequent read_temperature_c() must independently check HA timestamps.
+        """
+        if (not isinstance(entity_id, str) or not entity_id.startswith("sensor.")
+                or not all(ch.isalnum() or ch in "._" for ch in entity_id)):
+            raise ValueError("Expected a valid boiler sensor.* entity ID")
+        url = self._base_url + "/services/homeassistant/update_entity"
+        payload = json.dumps({"entity_id": entity_id}).encode("utf-8")
+        request = urllib.request.Request(
+            url, data=payload, method="POST",
+            headers={
+                "Authorization": "Bearer " + self._token,
+                "Content-Type": "application/json",
+            },
+        )
+        # Never follow a service call by treating its HTTP success as measurement.
+        with urllib.request.urlopen(request, timeout=4) as response:
+            response.read(65536)
 
     def read_power_w(self, entity_id: str):
         return parse_ha_number(self.get_state(entity_id), expected_unit="W")

@@ -1,6 +1,6 @@
 # Surplus PV — Canal de distribution Home Assistant OS
 
-Version 1.0.0-alpha.9 — mise à jour ARM64, simulation par défaut.
+Version 1.0.0-alpha.10 — mise à jour ARM64, simulation par défaut.
 La liaison GP8600–CELDUC a été déclarée validée par le propriétaire ; les autres
 essais et l'inhibition matérielle restent à vérifier séparément.
 Conserve les acquisitions gPlugK et Sofar optionnelles.

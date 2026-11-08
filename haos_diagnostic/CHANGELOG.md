@@ -1,5 +1,21 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.10 — candidat de publication, 08.11.2026
+
+- Surplus PV peut demander lui-même le rafraîchissement de l'entité
+  `sensor.temperature_boiler` via l'action HA `homeassistant.update_entity`.
+- Fonction facultative, désactivée par défaut ; interrogation bornée à
+  15 secondes par défaut (10–120 s configurables), sans répétition en rafale.
+- Le résultat de l'action ne remplace jamais la validation de la température :
+  `last_reported`/`last_updated`, unité °C, âge maximal et limite thermique
+  restent surveillés. Un défaut heartbeat antérieur reste mémorisé.
+- Aucun accès direct nouveau au bus 1-Wire, aucun privilège supplémentaire,
+  aucune commande de sortie déclenchée par le rafraîchissement.
+- Conservation du slug, de la planification de confort historique, de SQLite,
+  des modes MANUEL/AUTO et de l'inhibition matérielle.
+- Tests logiciels et CI requis avant publication ; mise à jour sur Raspberry Pi
+  et validation électrique indépendantes.
+
 ## 1.0.0-alpha.9 — candidat
 
 - Heartbeat conditionné aux boucles thermiques et de garde DAC indépendantes
