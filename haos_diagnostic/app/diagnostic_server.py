@@ -287,6 +287,16 @@ class Diagnostic:
         self.calibration = calibration_store or CalibrationStore()
         self._control_generation = self.output.revision
         self._next_boiler_refresh_monotonic = 0.0
+        self._boiler_refresh_result = "NOT_ATTEMPTED"
+        self._boiler_refresh_at = None
+        self.boiler_temperature_diagnostic = {
+            "entity": self.options['boiler_temperature_entity'],
+            "status": "STARTING", "reason": "Initial acquisition pending",
+            "value_c": None, "report_at": None, "age_s": None,
+            "refresh_result": self._boiler_refresh_result,
+            "refresh_at": None,
+        }
+        self._last_thermal_log_status = None
         self.refresh_control_temperature_once()
         self._last_meter_report = None
         self._last_poll_at = None
@@ -418,11 +428,26 @@ class Diagnostic:
                 entity = self.options["boiler_temperature_entity"]
                 water_c = self.options["demo_water_c"]
                 if entity:
-                    temperature = self.client.read_temperature_c(entity)
-                    if not injected_clock:
+                    if injected_clock:
+                        # Preserve deterministic historical simulations using
+                        # their explicitly supplied timeline.
+                        temperature = self.client.read_temperature_c(entity)
+                    else:
+                        # One source of truth: use the temperature already
+                        # validated by the independent thermal task. A second
+                        # HA GET in the regulator can disagree with the guard
+                        # and generate intermittent false diagnostic outcomes.
+                        guarded = self.output.snapshot()
+                        stamp = guarded.get('temperature_at')
+                        if stamp is None or guarded.get('temperature_c') is None:
+                            reason = self.boiler_temperature_diagnostic.get('reason', 'unavailable')
+                            raise ValueError('Boiler temperature invalid: ' + str(reason)[:160])
+                        temperature = Measurement(guarded['temperature_c'],
+                                                  datetime.fromisoformat(stamp))
                         now = datetime.now(timezone.utc)
+                    age_s = (now - temperature.measured_at).total_seconds()
                     if not temperature.valid(now, self.options["boiler_temperature_max_age_seconds"]):
-                        raise ValueError("Boiler temperature stale or future-dated")
+                        raise ValueError(f"Boiler temperature stale or future-dated (age={age_s:.1f} s)")
                     water_c = temperature.value
                 # Recheck meter freshness after any slow temperature request.
                 if freshness_report is None or not -2 <= (now-freshness_report).total_seconds() <= self.options["max_age_seconds"]:
@@ -580,39 +605,79 @@ class Diagnostic:
         injected = now is not None
         now = now or datetime.now(timezone.utc)
         measurement = None
+        entity = self.options['boiler_temperature_entity']
+        reason = None
         try:
-            entity = self.options['boiler_temperature_entity']
             if entity and self.client is not None:
-                # Optional active acquisition: ask HA to refresh the selected
-                # boiler entity, never a general HA service or a power output.
-                # Keep the cooldown even on failure (no retry storm).
+                # Only the configured boiler sensor may be refreshed.
+                # Throttle before the call: failed requests must not retry-storm.
                 if self.options['boiler_temperature_refresh_enabled']:
                     tick = time.monotonic()
                     if tick >= self._next_boiler_refresh_monotonic:
                         self._next_boiler_refresh_monotonic = (
                             tick + self.options['boiler_temperature_refresh_seconds'])
+                        self._boiler_refresh_at = datetime.now(timezone.utc).isoformat()
                         try:
                             self.client.request_boiler_temperature_refresh(entity)
+                            self._boiler_refresh_result = 'HA_REQUEST_OK_NOT_PHYSICAL_PROOF'
                         except (OSError, ValueError, RuntimeError, TypeError,
                                 AttributeError) as error:
+                            self._boiler_refresh_result = 'HA_REQUEST_FAILED'
                             LOG.warning('Boiler HA update_entity request failed: %s', error)
-                # HA may keep an old timestamp even after a successful POST.
-                # Retain independent age/value checks and fail closed.
                 measurement = self.client.read_temperature_c(entity)
             elif self.output.dac.kind == 'simulated' or self.output.connection == 'bench':
                 measurement = Measurement(self.options['demo_water_c'], now)
-        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
-            pass
+            else:
+                reason = 'Boiler sensor not configured or HA unavailable'
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+            reason = str(error)[:160]
         if not injected:
             now = datetime.now(timezone.utc)
+        age = ((now - measurement.measured_at).total_seconds()
+               if measurement is not None else None)
+        if measurement is None:
+            status = 'UNAVAILABLE'
+            reason = reason or 'No readable HA temperature'
+        elif age < -2:
+            status = 'FUTURE'
+            reason = f'HA boiler report is future-dated by {-age:.1f} s'
+        elif age > self.options['boiler_temperature_max_age_seconds']:
+            status = 'STALE'
+            reason = f'HA boiler report aged {age:.1f} s (limit '
+            reason += str(self.options['boiler_temperature_max_age_seconds']) + ' s)'
+        elif not 0 <= measurement.value <= 90:
+            status = 'OUT_OF_RANGE'
+            reason = 'Boiler reading outside 0..90 °C'
+        else:
+            status = 'FRESH'
+            reason = 'Recent HA report; physical conversion not proven'
+        self.boiler_temperature_diagnostic = {
+            'entity': entity or None, 'status': status, 'reason': reason,
+            'value_c': measurement.value if measurement is not None else None,
+            'report_at': (measurement.measured_at.isoformat()
+                          if measurement is not None else None),
+            'age_s': round(age, 1) if age is not None else None,
+            'refresh_result': self._boiler_refresh_result,
+            'refresh_at': self._boiler_refresh_at,
+            'max_age_s': self.options['boiler_temperature_max_age_seconds'],
+        }
+        if status != self._last_thermal_log_status:
+            # Warn on transitions, not every 1-second poll; timestamps and age
+            # make a stale report distinguishable from timezone or HTTP errors.
+            log = LOG.info if status == 'FRESH' else LOG.warning
+            log('Boiler thermal status=%s entity=%s value=%s C age=%s s '
+                'report=%s refresh=%s detail=%s', status, entity or '<not configured>',
+                self.boiler_temperature_diagnostic['value_c'],
+                self.boiler_temperature_diagnostic['age_s'],
+                self.boiler_temperature_diagnostic['report_at'],
+                self._boiler_refresh_result, reason)
+            self._last_thermal_log_status = status
         try:
             self.output.observe_temperature(measurement, self.options['demo_max_c'],
                                             self.options['boiler_temperature_max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
-        self.heartbeat.progress('thermal', healthy=(measurement is not None
-            and measurement.valid(now, self.options['boiler_temperature_max_age_seconds'])
-            and 0 <= measurement.value <= 90
+        self.heartbeat.progress('thermal', healthy=(status == 'FRESH'
             and self.output.error is None))
 
     def set_output(self, values):
@@ -829,11 +894,12 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.10",
+            "version": "1.0.0-alpha.11",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
+            "boiler_temperature_diagnostic": dict(self.boiler_temperature_diagnostic),
             "air_probe": self.air_probe.snapshot(),
             "comfort": dict(self.comfort),
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
@@ -852,9 +918,11 @@ class Diagnostic:
         while not stop.is_set():
             record = self.poll_once()
             if record["status"] in ("OK", "POWER_UNKNOWN"):
-                LOG.info("gPlugK meter=%s W | status %s | virtual boiler %d W | virtual grid %s; temperature demo %.1f C",
+                thermal = record.get('boiler_temperature_diagnostic', {})
+                LOG.info("gPlugK meter=%s W | status %s | virtual boiler %d W | virtual grid %s; boiler=%s C source=%s thermal_age=%s s",
                          str(record["meter_w"]), record["status"], record["simulated_boiler_w"],
-                         str(record["simulated_grid_after_w"]), self.options["demo_water_c"])
+                         str(record["simulated_grid_after_w"]), record.get('water_temperature_c'),
+                         record.get('temperature_source'), thermal.get('age_s'))
             else:
                 LOG.warning("Diagnostic read-only: %s", record["error"])
             stop.wait(self.options["sample_seconds"])
@@ -929,7 +997,9 @@ def handler_factory(diag: Diagnostic):
                 body = CONFIG_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
             elif path == "/api/output":
-                body = json.dumps({**diag.output.snapshot(), "token": diag.weather_toggle_token},
+                body = json.dumps({**diag.output.snapshot(),
+                                   "boiler_temperature_diagnostic": dict(diag.boiler_temperature_diagnostic),
+                                   "token": diag.weather_toggle_token},
                                   ensure_ascii=False, allow_nan=False).encode('utf-8')
                 content_type = 'application/json; charset=utf-8'
             elif path == "/api/heartbeat":
