@@ -57,6 +57,8 @@ def parse_options(source: dict) -> dict:
         "sample_seconds": int(source.get("sample_seconds", 10)),
         "max_age_seconds": int(source.get("max_age_seconds", 60)),
         "boiler_temperature_max_age_seconds": int(source.get("boiler_temperature_max_age_seconds", 60)),
+        "boiler_temperature_refresh_enabled": source.get("boiler_temperature_refresh_enabled", False),
+        "boiler_temperature_refresh_seconds": int(source.get("boiler_temperature_refresh_seconds", 15)),
         "demo_water_c": float(source.get("demo_water_c", 45)),
         "demo_max_c": float(source.get("demo_max_c", 70)),
         "target_export_w": float(source.get("target_export_w", 100)),
@@ -111,6 +113,10 @@ def parse_options(source: dict) -> dict:
         raise ValueError("Invalid max age")
     if not 10 <= options["boiler_temperature_max_age_seconds"] <= 300:
         raise ValueError("Invalid boiler temperature max age")
+    if not isinstance(options["boiler_temperature_refresh_enabled"], bool):
+        raise ValueError("Boiler active refresh must be a boolean")
+    if not 10 <= options["boiler_temperature_refresh_seconds"] <= 120:
+        raise ValueError("Invalid boiler active refresh period")
     if not 0 <= options["demo_water_c"] <= 90:
         raise ValueError("Invalid demonstration temperature")
     if not 40 <= options["demo_max_c"] <= 80:
@@ -280,6 +286,7 @@ class Diagnostic:
         self.heartbeat = HeartbeatService()
         self.calibration = calibration_store or CalibrationStore()
         self._control_generation = self.output.revision
+        self._next_boiler_refresh_monotonic = 0.0
         self.refresh_control_temperature_once()
         self._last_meter_report = None
         self._last_poll_at = None
@@ -576,6 +583,21 @@ class Diagnostic:
         try:
             entity = self.options['boiler_temperature_entity']
             if entity and self.client is not None:
+                # Optional active acquisition: ask HA to refresh the selected
+                # boiler entity, never a general HA service or a power output.
+                # Keep the cooldown even on failure (no retry storm).
+                if self.options['boiler_temperature_refresh_enabled']:
+                    tick = time.monotonic()
+                    if tick >= self._next_boiler_refresh_monotonic:
+                        self._next_boiler_refresh_monotonic = (
+                            tick + self.options['boiler_temperature_refresh_seconds'])
+                        try:
+                            self.client.request_boiler_temperature_refresh(entity)
+                        except (OSError, ValueError, RuntimeError, TypeError,
+                                AttributeError) as error:
+                            LOG.warning('Boiler HA update_entity request failed: %s', error)
+                # HA may keep an old timestamp even after a successful POST.
+                # Retain independent age/value checks and fail closed.
                 measurement = self.client.read_temperature_c(entity)
             elif self.output.dac.kind == 'simulated' or self.output.connection == 'bench':
                 measurement = Measurement(self.options['demo_water_c'], now)
@@ -807,7 +829,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.9",
+            "version": "1.0.0-alpha.10",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
