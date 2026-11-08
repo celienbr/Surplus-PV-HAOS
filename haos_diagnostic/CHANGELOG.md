@@ -1,5 +1,13 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.9 — candidat
+
+- Heartbeat conditionné aux boucles thermiques et de garde DAC indépendantes
+  de l'acquisition gPlugK ; une consigne AUTO expirée est inhibée.
+- Fraîcheur de la température boiler séparée du compteur, 60 s par défaut.
+- Sélecteur mobile SW-011 : interaction préservée pendant le polling.
+- Simulations uniquement ; temporisation et protections matérielles non validées.
+
 ## 1.0.0-alpha.8 — candidat non publié
 
 - Diagnostic de communication gPlugK séparé des erreurs thermiques et de régulation.

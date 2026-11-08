@@ -1,6 +1,6 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.8
+# Surplus PV — Home Assistant OS 1.0.0-alpha.9
 
-Version 1.0.0-alpha.8 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
+Version 1.0.0-alpha.9 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
 Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable.
 Tableau de bord : réseau gPlugK et prévisions. L'acquisition AC Sofar optionnelle
 fournit les index de production et l'autoconsommation conditionnelle. Sans configuration,
@@ -14,6 +14,19 @@ Configurer dans Home Assistant l'entité `boiler_temperature_entity` corresponda
 une valeur de démonstration n'autorise pas la commande réelle. Les données et
 options historiques de sonde hors boiler sont conservées mais ne sont plus
 affichées dans l'interface active.
+
+La fraîcheur thermique est indépendante de celle du compteur :
+`boiler_temperature_max_age_seconds` vaut 60 s par défaut (10–300 s).
+Ce seuil conserve la limite antérieure ; la cadence de la sonde installée n'a
+pas été vérifiée. `last_reported` ou, à défaut, `last_updated` indique un
+rapport HA, sans prouver une nouvelle conversion physique. Vérifier la cadence
+et les protections indépendantes avant tout ajustement. Une lecture HTTP
+répétée ne renouvelle pas l'horodatage de mesure.
+
+Le heartbeat dépend des boucles thermique et de garde DAC ; un compteur perdu
+ne valide pas une consigne AUTO ancienne. Aucun appoint autonome n'est créé en
+cas de perte du compteur. Atteindre le plafond inhibe la demande de chauffe.
+La sélection physique K2 et les temporisations Omron restent à vérifier.
 
 GP8600 réel : dac_driver=gp8600, dac_i2c_address=88..95, bus /dev/i2c-1.
 DAC 16 bits, 0–20 mA. Le heartbeat utilise GPIO17 ; aucun service HA ne commande K2.
@@ -56,11 +69,11 @@ Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.8, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.9, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.8, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.9, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Vérifier le signe import/export et la disponibilité des mesures. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
 
@@ -85,7 +98,7 @@ le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux résea
 récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
 silencieusement à zéro. Les nouvelles observations sont conservées dans une table
 SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-Publication logicielle 1.0.0-alpha.8 demandée par le propriétaire ; sauvegarde et mise
+Publication logicielle 1.0.0-alpha.9 demandée par le propriétaire ; sauvegarde et mise
 à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
 sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.
