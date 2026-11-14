@@ -43,6 +43,7 @@ class Heartbeat:
         self.state = 'ARRET'
         self.reason = None
         self.last_pulse = None
+        self.armed_at = None
         self.next_pulse = self.pulse_end = None
         self.active = False
 
@@ -59,6 +60,7 @@ class Heartbeat:
         self.state = 'INITIALISATION'
         self.reason = None
         self.next_pulse = self.clock()
+        self.armed_at = self.next_pulse
         self.pulse_end = None
         self.active = False
 
@@ -67,6 +69,8 @@ class Heartbeat:
             return
         now = self.clock()
         if any(stamp is None for stamp in self.tasks.values()):
+            if not 0 <= now - self.armed_at <= self.timeout:
+                self.fault('Initialisation des tâches critiques périmée')
             return
         if any(not 0 <= now-stamp <= self.timeout for stamp in self.tasks.values()):
             self.fault('Tâche critique périmée ou horloge invalide')
@@ -120,6 +124,7 @@ class HeartbeatService:
         self.lock = RLock()
         self.heartbeat = None
         self.pending_fault = None
+        self.pending_stop = False
 
     def start(self, output, required, **timing):
         with self.lock:
@@ -129,6 +134,7 @@ class HeartbeatService:
             heartbeat.arm()
             self.heartbeat = heartbeat
             self.pending_fault = None
+            self.pending_stop = False
 
     def progress(self, task, healthy=True):
         # A blocked GPIO ioctl must not stall the temperature or control loop.
@@ -154,6 +160,13 @@ class HeartbeatService:
                     reason, self.pending_fault = self.pending_fault, None
                     if self.heartbeat.state not in ('ARRET', 'DEFAUT'):
                         self.heartbeat.fault(reason)
+                elif self.pending_stop:
+                    self.pending_stop = False
+                    if self.heartbeat.state != 'DEFAUT':
+                        try:
+                            self.heartbeat.stop()
+                        except OSError:
+                            pass  # stop() recorded the uncertain GPIO state
                 else:
                     self.heartbeat.tick()
 
@@ -161,6 +174,11 @@ class HeartbeatService:
         with self.lock:
             if self.heartbeat is not None:
                 self.heartbeat.stop()
+
+    def stop_for_mode_change(self):
+        # Neither a held lock nor a blocking GPIO close may delay MANUEL.
+        # The heartbeat worker performs the stop on its next tick.
+        self.pending_stop = True
 
     def snapshot(self):
         with self.lock:
@@ -170,6 +188,10 @@ class HeartbeatService:
                         'last_pulse_monotonic': None, 'driver': None}
             return {'state': hb.state, 'active': hb.active, 'reason': hb.reason,
                     'last_pulse_monotonic': hb.last_pulse, 'period_s': hb.period,
+                    'task_timeout_s': hb.timeout,
+                    'task_progress_monotonic': dict(hb.tasks),
+                    'task_age_s': {name: (None if stamp is None else max(0, hb.clock() - stamp))
+                                   for name, stamp in hb.tasks.items()},
                     'width_s': hb.width,
                     'driver': 'SIMULATION' if isinstance(hb.output, SimulatedGPIO) else 'GPIO_REEL',
                     'gpio': getattr(hb.output, 'offset', None)}

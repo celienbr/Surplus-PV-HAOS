@@ -1,11 +1,40 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.12
+# Surplus PV — Home Assistant OS 1.0.0-alpha.13
 
-Version 1.0.0-alpha.12 : GP8600, BANC DAC et MANUEL Boiler, simulation par défaut.
+Version 1.0.0-alpha.13 : simulation, BANC DAC, MANUEL et AUTO réel conditionné.
 Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable.
 Tableau de bord : réseau gPlugK et prévisions. L'acquisition AC Sofar optionnelle
 fournit les index de production et l'autoconsommation conditionnelle. Sans configuration,
 PV réelle et autoconsommation restent indisponibles. Prévisions Forecast.Solar séparées des mesures.
 Planification de confort et trajectoire 48 h conservées.
+
+## Mise à jour depuis alpha.12 et configuration réelle
+
+Dans Home Assistant, sauvegarder l'add-on et ses données /data, puis mettre à jour
+Surplus PV depuis la page de l'add-on. Le slug reste `surplus_pv_diagnostic` ;
+aucune réinstallation ni suppression de SQLite n'est demandée. En cas de retour
+arrière, sauvegarder les données récentes puis restaurer la sauvegarde alpha.12
+de la même application ; une restauration peut remplacer les données récentes.
+
+Dans les options de l'add-on, sélectionner `dac_driver: gp8600`,
+`dac_connection: boiler`, l'adresse I²C effective et `boiler_temperature_entity`.
+Renseigner `power_curve_points` comme liste JSON de couples `[W, mA]` issus de
+mesures, strictement croissants, couvrant 0 à la puissance maximale configurée ;
+les courants sont compris entre 4 et 20 mA. Après vérification par le propriétaire,
+mettre `power_curve_confirmed: true`. L'interpolation est bornée ; les relevés DAC
+sur résistance ne sont pas des mesures de puissance du chauffe-eau. Sans cette
+confirmation AUTO réel et son heartbeat GPIO sont refusés.
+
+Renseigner `heartbeat_omron_setting_s` avec le réglage matériel effectif ; zéro
+interdit l'activation GPIO. `heartbeat_task_timeout_s` doit être au moins deux
+fois `sample_seconds`, et sa somme avec la période d'impulsion doit être inférieure
+au réglage Omron renseigné. L'impulsion doit durer au moins 50 ms, le repos 100 ms.
+Dans Configuration, démarrer explicitement le heartbeat GPIO17, puis dans Boiler
+sélectionner AUTO ; ARRÊT annule la consigne, MANUEL règle directement le DAC et
+reste indépendant du compteur et du heartbeat. Un défaut mémorisé nécessite un
+arrêt explicite du heartbeat, la correction de sa cause, puis un réarmement.
+Le voyant est matériel, aucun contact Omron ou K2 n'est lu par l'application.
+En cas d'erreur I²C, la sortie physique est inconnue ; la récupération à zéro et
+la sélection d'un mode sont explicites. Aucune ancienne consigne n'est reprise.
 
 ## Sonde du boiler
 
@@ -78,7 +107,7 @@ L'état NORMAL GPIO17/Omron/K2 doit être validé séparément et ne doit pas ê
 forcé par le logiciel. Les réserves matérielles B01–B10 restent ouvertes.
 
 
-Le heartbeat dépend des boucles thermique et de garde DAC ; un compteur perdu
+Le heartbeat dépend des boucles de régulation, thermique et de garde DAC ; un compteur perdu
 ne valide pas une consigne AUTO ancienne. Aucun appoint autonome n'est créé en
 cas de perte du compteur. Atteindre le plafond inhibe la demande de chauffe.
 La sélection physique K2 et les temporisations Omron restent à vérifier.
@@ -90,7 +119,7 @@ dac_connection=boiler : AUTO et MANUEL réels exigent sélection explicite et
 sonde réelle valide. AUTO exige un heartbeat GPIO sain ; MANUEL ne dépend pas
 de son état logiciel. La sélection physique de la source dépend du câblage
 et de l’Omron : une consigne MANUELLE ne prouve pas que le DAC pilote le CELDUC. Le courant 4–20 mA n'est pas une
-mesure de puissance ; la caractéristique automatique est provisoire. À l'arrêt
+mesure de puissance ; AUTO réel exige une courbe de puissance mesurée et confirmée. À l'arrêt
 ou à 0 % réel le logiciel demande zéro, mais une isolation matérielle de chauffe
 indépendante reste à confirmer. La commutation Omron mode E n'est pas instantanée.
 Au redémarrage : aucune consigne reprise ; la sortie physique reste inconnue
@@ -124,11 +153,11 @@ Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
    ne jamais copier uniquement une base SQLite active.
 4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
    Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.12, puis choisir Mettre à jour.
+   Vérifier que la version proposée est 1.0.0-alpha.13, puis choisir Mettre à jour.
    Ne pas installer une deuxième application, changer d'URL de dépôt, ni
    désinstaller l'application en service. Si la version n'est pas proposée,
    vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.12, les réglages conservés,
+5. Après redémarrage, vérifier la version 1.0.0-alpha.13, les réglages conservés,
    les anciennes archives, le graphique 48 h et le planificateur de confort.
    Vérifier le signe import/export et la disponibilité des mesures. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
 
@@ -153,7 +182,7 @@ le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux résea
 récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
 silencieusement à zéro. Les nouvelles observations sont conservées dans une table
 SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-Publication logicielle 1.0.0-alpha.12 demandée par le propriétaire ; sauvegarde et mise
+Publication logicielle 1.0.0-alpha.13 demandée par le propriétaire ; sauvegarde et mise
 à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
 sur Raspberry Pi restent à réceptionner après la mise à jour.
 La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.

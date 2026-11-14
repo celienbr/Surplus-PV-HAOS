@@ -1,6 +1,6 @@
 name: "Surplus PV - Diagnostic (sans puissance)"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.12"
+version: "1.0.0-alpha.13"
 description: "AUTO virtuel, GP8600 explicite en banc ou manuel Boiler"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -22,6 +22,10 @@ options:
   dac_driver: simulated
   dac_connection: bench
   dac_i2c_address: 88
+  power_curve_points: ""
+  power_curve_confirmed: false
+  heartbeat_task_timeout_s: 30
+  heartbeat_omron_setting_s: 0
   pi_entity: sensor.gplugk_z_pi
   po_entity: sensor.gplugk_z_po
   sample_seconds: 10
@@ -75,6 +79,10 @@ schema:
   dac_driver: "list(simulated|gp8600)"
   dac_connection: "list(bench|boiler)"
   dac_i2c_address: "int(88,95)"
+  power_curve_points: str
+  power_curve_confirmed: bool
+  heartbeat_task_timeout_s: "int(1,300)"
+  heartbeat_omron_setting_s: "int(0,3600)"
   pi_entity: str
   po_entity: str
   sample_seconds: "int(5,60)"
