@@ -79,9 +79,9 @@ function render(p){
  syncUserForm(o,w);
  text("setting-reserve",watts(o.target_export_w));
  text("setting-battery",kwh(o.battery_tomorrow_kwh));
- if(w.pac_model_status==="ESTIMATED")tag("pac-tag","warn","Simulation active");
+ if(w.pac_model_status==="ESTIMATED")tag("pac-tag","warn","Estimation active");
  else if(!o.pac_enabled)tag("pac-tag","","Désactivée");
- else tag("pac-tag","bad","Simulation indisponible");
+ else tag("pac-tag","bad","Estimation indisponible");
  text("pac-kwh",kwh(w.pac_electric_tomorrow_kwh));
  text("pac-today",kwh(prof.pac_today_remaining_kwh));
  text("pac-headline",o.pac_enabled?"Restant aujourd’hui "+kwh(prof.pac_today_remaining_kwh)+" · demain "+kwh(w.pac_electric_tomorrow_kwh):"Estimation PAC désactivée");
@@ -106,9 +106,11 @@ function renderCalculation(p){
  text('calc-note','Bilan de demain, borné à zéro par le moteur. La réserve instantanée en W est traitée séparément. '+(!isnum(w.pac_electric_tomorrow_kwh)?'Estimation PAC absente : aucun surplus journalier affirmé.':''));
  const adaptive=w.status==='ADAPTIVE';
  text('calc-target',celsius(adaptive?w.target_c:o.demo_max_c));
- text('calc-target-state',adaptive?'Consigne calculée maintenant · simulation':'Plafond manuel · adaptation inactive');
- text('calc-heat',watts(p.simulated_boiler_w));text('calc-heat-state','État du régulateur : '+(p.simulation_state||'—'));
- text('calc-protection',!isnum(p.meter_w)?'Mesure inexploitable':o.grid_backup_enabled?'Appoint confort autorisé (simulation)':'Surplus uniquement');
+ text('calc-target-state',adaptive?'Consigne calculée maintenant':'Plafond manuel · adaptation inactive');
+ const output=p.output_control||{};
+ const requested=output.mode==='AUTO_REEL'?(output.enabled?output.auto_virtual_power_w:0):output.mode==='AUTO'?0:null;
+ text('calc-heat',watts(requested));text('calc-heat-state',output.mode==='AUTO'?'Arrêt':output.mode==='MANUEL_REEL'?'Commande manuelle':'État : '+(output.reason||'—'));
+ text('calc-protection',!isnum(p.meter_w)?'Mesure inexploitable':o.grid_backup_enabled?'Appoint confort autorisé':'Surplus uniquement');
  text('calc-reserve','Réserve appliquée : '+watts(o.target_export_w+(o.weather_enabled?o.weather_reserve_w:0)));
  text('calc-decision',w.decision||'Stratégie non évaluée');
  text('fallback-pv',w.pv_status==='UNAVAILABLE'?'Repli actif · prévision journalière absente':(prof.daily_pv_status==='OK'||w.pv_status==='OK')?'Totaux journaliers disponibles':'État non confirmé');
@@ -123,7 +125,7 @@ function swissInstant(value){
 }
 function renderComfort(plan,options={}){
  const c=plan||{};
- const labels={MINIMUM_REACHED:'Minimum atteint',WAITING_SURPLUS:'Attente du surplus',BACKUP_DUE:'Départ prudent atteint',INSUFFICIENT_TIME:'Temps insuffisant',MISSED_DEADLINE:'Échéance manquée',MISSED_DISABLED:'Échéance manquée · appoint interdit',THERMAL_LIMIT:'Plafond thermique atteint',WAITING:'En attente',FAULT:'Calcul inhibé',INVALID:'Paramètres invalides',COMFORT_MET:'Minimum atteint',SATISFIED:'Minimum atteint',SOLAR_EXPECTED:'Solaire attendu',WAIT_SOLAR:'Attente du solaire',WAITING_SOLAR:'Attente du solaire',WAIT_BACKUP:'Appoint différé',WAITING_BACKUP:'Appoint différé',BACKUP_REQUIRED:'Appoint requis',BACKUP_ACTIVE:'Appoint simulé',BACKUP:'Appoint simulé',IMPOSSIBLE:'Échéance hors capacité',BACKUP_DISABLED:'Appoint interdit',UNAVAILABLE:'Plan indisponible',SURPLUS_ONLY:'Surplus uniquement'};
+ const labels={MINIMUM_REACHED:'Minimum atteint',WAITING_SURPLUS:'Attente du surplus',BACKUP_DUE:'Départ prudent atteint',INSUFFICIENT_TIME:'Temps insuffisant',MISSED_DEADLINE:'Échéance manquée',MISSED_DISABLED:'Échéance manquée · appoint interdit',THERMAL_LIMIT:'Plafond thermique atteint',WAITING:'En attente',FAULT:'Calcul inhibé',INVALID:'Paramètres invalides',COMFORT_MET:'Minimum atteint',SATISFIED:'Minimum atteint',SOLAR_EXPECTED:'Solaire attendu',WAIT_SOLAR:'Attente du solaire',WAITING_SOLAR:'Attente du solaire',WAIT_BACKUP:'Appoint différé',WAITING_BACKUP:'Appoint différé',BACKUP_REQUIRED:'Appoint requis',BACKUP_ACTIVE:'Appoint demandé',BACKUP:'Appoint demandé',IMPOSSIBLE:'Échéance hors capacité',BACKUP_DISABLED:'Appoint interdit',UNAVAILABLE:'Plan indisponible',SURPLUS_ONLY:'Surplus uniquement'};
  const code=c.status||'WAITING';
  tag('comfort-status',!plan?'':c.theoretical_possible===false||['FAULT','INVALID','IMPOSSIBLE','UNAVAILABLE'].includes(code)?'bad':c.backup_power_w>0?'warn':'ok',labels[code]||code);
  text('comfort-reason',(c.reason||'Aucun plan reçu. Les valeurs manquantes ne valent pas zéro.')+(c.gate_state?' Filtre de commande : '+c.gate_state+'.':''));
@@ -131,7 +133,7 @@ function renderComfort(plan,options={}){
  text('comfort-need',kwh(c.energy_needed_kwh));text('comfort-solar',kwh(c.solar_before_deadline_kwh));
  text('comfort-backup-energy',kwh(c.backup_energy_kwh));text('comfort-backup-power',watts(c.backup_power_w));
  text('comfort-feasibility',c.theoretical_possible===true?'Capacité suffisante selon le modèle ; confort réel non garanti.':c.theoretical_possible===false?'Minimum non garanti : délai, puissance ou autorisation insuffisants.':'Faisabilité non évaluée.');
- text('comfort-forecast','Prévisions : '+(c.forecast_status||'non évaluées')+' · appoint réseau '+(options.grid_backup_enabled===true?'autorisé uniquement jusqu’au minimum':'interdit')+' · simulation.');
+ text('comfort-forecast','Prévisions : '+(c.forecast_status||'non évaluées')+' · appoint réseau '+(options.grid_backup_enabled===true?'autorisé uniquement jusqu’au minimum':'interdit')+'.');
 }
 function syncUserForm(o,w){
  if(settingsDirty||settingsBusy)return;

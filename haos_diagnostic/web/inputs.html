@@ -25,21 +25,21 @@
  <label>Heure d'atteinte du confort (Europe/Zurich)<input id="user-time" type="time" required></label>
  <label class="user-switch"><input id="user-weather" type="checkbox"> Activer la stratégie météo</label>
  <label class="user-switch"><input id="user-pac" type="checkbox"> Prendre en compte la consommation de la PAC</label>
- <label class="user-switch"><input id="user-backup" type="checkbox"> Autoriser l’appoint réseau pour le minimum de confort (simulation)</label>
- <p class="note">Ces valeurs pilotent la planification simulée. Le surplus solaire est prioritaire ; l’appoint réseau, désactivé par défaut, est limité au minimum de confort. Le maximum reste un plafond. Aucune commande réelle du boiler.</p>
+ <label class="user-switch"><input id="user-backup" type="checkbox"> Autoriser l’appoint réseau pour le minimum de confort</label>
+ <p class="note">Le surplus solaire est prioritaire. L’appoint réseau est limité au minimum de confort ; la chauffe reste soumise aux mesures valides.</p>
  <button id="user-save" type="submit">Enregistrer les paramètres</button><p id="user-save-status" role="status" aria-live="polite">Paramètres conservés après enregistrement.</p>
  </form>
  <dl><dt>Réserve réseau</dt><dd id="setting-reserve">—</dd><dt>Réserve batterie demain</dt><dd id="setting-battery">—</dd><dt>Maison aujourd’hui / demain</dt><dd id="setting-house">—</dd><dt>Réserve autres usages</dt><dd id="setting-extra">—</dd><dt>Heure enregistrée</dt><dd id="setting-time">—</dd></dl>
- <p class="note">Les réglages sont conservés dans l’application de test. L’identifiant Forecast.Solar et les hypothèses thermiques se règlent dans Home Assistant → Application Surplus PV → Configuration. L’identifiant déjà enregistré est conservé lors de la migration.</p></div></details>
+ <p class="note">Les réglages sont conservés dans l’application. L’identifiant Forecast.Solar et les hypothèses thermiques se règlent dans Home Assistant → Application Surplus PV → Configuration. L’identifiant déjà enregistré est conservé lors de la migration.</p></div></details>
 
- <details class="card" id="card-pac"><summary><span class="leading" data-icon="pac" aria-hidden="true"></span><span class="card-body"><span class="card-title">PAC — estimation</span><div class="card-sub">Consommation estimée selon la température</div><span class="tag warn" id="pac-tag">Simulation</span><div class="at-glance" id="pac-headline">Restant aujourd’hui — kWh · demain — kWh</div><div class="card-meta">Aucune commande physique</div></span><span class="arrow" aria-hidden="true">›</span></summary>
+ <details class="card" id="card-pac"><summary><span class="leading" data-icon="pac" aria-hidden="true"></span><span class="card-body"><span class="card-title">PAC — estimation</span><div class="card-sub">Consommation estimée selon la température</div><span class="tag warn" id="pac-tag">Estimation</span><div class="at-glance" id="pac-headline">Restant aujourd’hui — kWh · demain — kWh</div><div class="card-meta">Aucune commande physique</div></span><span class="arrow" aria-hidden="true">›</span></summary>
  <div class="detail"><dl><dt>Consommation restante estimée aujourd’hui</dt><dd id="pac-today">—</dd><dt>Consommation prévue demain</dt><dd id="pac-kwh">—</dd><dt>COP supposé</dt><dd id="pac-cop">—</dd><dt>Référence à 7 °C</dt><dd id="pac-reference">—</dd></dl>
  <p id="pac-message">Modèle simplifié, non étalonné.</p><p class="note">La PAC est déjà comprise dans la mesure instantanée gPlugK. Sa consommation n’est déduite que des prévisions futures, sans double comptage.</p></div></details>
 
 </div><button id="expand-all" class="secondary">Voir les détails des entrées</button></section>
 <section class="panel calculation" id="calcul"><section class="comfort-plan" aria-labelledby="comfort-heading"><div class="section-heading"><h3 id="comfort-heading">Planification du confort</h3><span class="tag" id="comfort-status" role="status">En attente</span></div>
 <p id="comfort-reason" class="decision">Aucun plan reçu.</p>
-<dl class="comfort-metrics"><div><dt>Échéance · heure suisse</dt><dd id="comfort-deadline">—</dd></div><div><dt>Dernier départ prudent</dt><dd id="comfort-start">—</dd></div><div><dt>Besoin thermique estimé</dt><dd id="comfort-need">—</dd></div><div><dt>Surplus prévu avant l’échéance</dt><dd id="comfort-solar">—</dd></div><div><dt>Complément réseau estimé</dt><dd id="comfort-backup-energy">—</dd></div><div><dt>Puissance totale en mode appoint (simulée)</dt><dd id="comfort-backup-power">—</dd></div></dl>
+<dl class="comfort-metrics"><div><dt>Échéance · heure suisse</dt><dd id="comfort-deadline">—</dd></div><div><dt>Dernier départ prudent</dt><dd id="comfort-start">—</dd></div><div><dt>Besoin thermique estimé</dt><dd id="comfort-need">—</dd></div><div><dt>Surplus prévu avant l’échéance</dt><dd id="comfort-solar">—</dd></div><div><dt>Complément réseau estimé</dt><dd id="comfort-backup-energy">—</dd></div><div><dt>Puissance d’appoint demandée</dt><dd id="comfort-backup-power">—</dd></div></dl>
 <p id="comfort-feasibility" class="muted">Faisabilité non évaluée.</p><p id="comfort-forecast" class="muted">Couverture des prévisions non évaluée.</p>
 <p class="note">Modèle thermique avec hypothèses : la prévision ne garantit pas l’eau chaude. La consigne effective reste soumise aux mesures valides et aux limites thermiques. Le secours matériel S2 peut chauffer sur le réseau indépendamment de l’autorisation logicielle.</p></section></section></div>
 <section class="panel" id="profil"><div class="section-heading"><span class="step">3</span><h2>Profil sur 48 heures</h2><small>Historique réel + prévisions</small></div>
@@ -88,7 +88,7 @@
 </div>
 <button type="button" class="primary" id="csv-custom" style="width:100%">Télécharger la période sélectionnée (CSV)</button>
 <p id="csv-export-info" class="screen-sub" aria-live="polite">Période maximale : 31 jours par export. Les périodes sans mesures restent vides.</p>
-<p class="screen-sub">Excel : ouvrir le CSV directement ou utiliser <strong>Données → À partir d'un fichier texte/CSV</strong>. Les puissances signées sont numériques ; une injection correspond à une valeur négative. Les colonnes de chauffe sont des simulations.</p>
+<p class="screen-sub">Excel : ouvrir le CSV directement ou utiliser <strong>Données → À partir d'un fichier texte/CSV</strong>. Les puissances signées sont numériques ; une injection correspond à une valeur négative. Les colonnes de chauffe indiquent des demandes ou des estimations, pas des mesures.</p>
 </section>
 <button type="button" id="history-logs" class="secondary">Afficher / masquer les logs (7 jours)</button>
 <pre id="logs-view" hidden style="overflow:auto;white-space:pre-wrap;color:var(--ink);font-size:11px;max-height:320px"></pre>

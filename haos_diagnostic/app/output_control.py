@@ -27,6 +27,7 @@ class OutputControl:
         self.requested_ma = self.manual_percent = 0.
         self.target_c = None
         self.auto_deadline = None
+        self.auto_suspended = False
         self.reason = "Démarrage en AUTO ; aucune consigne reprise"
         self.auto_power_w = 0.
         self.temperature = None
@@ -54,6 +55,7 @@ class OutputControl:
         self.requested_ma = self.manual_percent = self.auto_power_w = 0.
         self.target_c = None
         self.auto_deadline = None
+        self.auto_suspended = False
         self.reason = reason
 
     def _write(self, ma):
@@ -75,19 +77,35 @@ class OutputControl:
             valid = measurement is not None and measurement.valid(now, max_age) and 0 <= measurement.value <= 90
             self.temperature, self.ceiling, self.max_age = measurement if valid else None, ceiling, max_age
             if self.mode in ("MANUEL", "MANUEL_BANC", "MANUEL_REEL", "AUTO_REEL"):
-                if not self._temperature_ok(now):
+                if self.mode == "AUTO_REEL" and (not self._temperature_ok(now) or self.temperature.value >= ceiling):
+                    self._suspend_auto("Chauffe suspendue : température indisponible ou plafond atteint")
+                elif not self._temperature_ok(now):
                     self._stop("Température invalide ou périmée ; retour AUTO")
                 elif self.mode != "AUTO_REEL" and self.temperature.value >= min(self.target_c, ceiling):
                     self._stop("Consigne thermique atteinte ; retour AUTO")
-                elif self.mode == "AUTO_REEL" and self.temperature.value >= ceiling:
-                    self._stop("Plafond thermique atteint ; reprise explicite nécessaire")
 
     def check_freshness(self, now=None):
         with self.lock:
-            if self.mode in ("MANUEL", "MANUEL_BANC", "MANUEL_REEL", "AUTO_REEL") and not self._temperature_ok(now or datetime.now(timezone.utc)):
+            if self.mode == "AUTO_REEL" and not self._temperature_ok(now or datetime.now(timezone.utc)):
+                self._suspend_auto("Chauffe suspendue : température périmée")
+            elif self.mode in ("MANUEL", "MANUEL_BANC", "MANUEL_REEL") and not self._temperature_ok(now or datetime.now(timezone.utc)):
                 self._stop("Température périmée ; retour AUTO")
             elif self.mode in ("AUTO_BANC", "AUTO_REEL") and self.auto_deadline is not None and monotonic() > self.auto_deadline:
-                self._stop("Calcul AUTO périmé ; réarmement explicite nécessaire")
+                if self.mode == "AUTO_REEL":
+                    self._suspend_auto("Chauffe suspendue : calcul AUTO périmé")
+                else:
+                    self._stop("Calcul AUTO périmé ; réarmement explicite nécessaire")
+
+    def _suspend_auto(self, reason):
+        if not self.auto_suspended:
+            self.revision += 1
+            self.auto_suspended = True
+            self.enabled = False
+            self.auto_power_w = self.requested_ma = 0.
+            self.auto_deadline = None
+            self.reason = reason
+            if self.dac.ready:
+                self._write(0)
 
     def _stop(self, reason):
         self._clear(reason)
@@ -193,14 +211,21 @@ class OutputControl:
             else:
                 raise ValueError("Unknown control action")
 
-    def observe_auto(self, power_w, revision, healthy=True):
+    def observe_auto(self, power_w, revision, healthy=True, new_sample=True):
         # Alpha.3 AUTO is virtual; cannot overwrite either explicit mode.
         with self.lock:
             if self.mode == "AUTO" and self.revision == revision:
                 self.auto_power_w = power_w
             elif self.mode in ("AUTO_BANC", "AUTO_REEL") and self.revision == revision:
-                if not healthy or (self.mode == "AUTO_REEL" and not self._temperature_ok(datetime.now(timezone.utc))):
-                    self._stop("Défaut AUTO ; réarmement explicite nécessaire")
+                now = datetime.now(timezone.utc)
+                invalid_thermal = self.mode == "AUTO_REEL" and (not self._temperature_ok(now) or self.temperature.value >= self.ceiling)
+                if not healthy or invalid_thermal:
+                    if self.mode == "AUTO_REEL":
+                        self._suspend_auto("Chauffe suspendue : données invalides")
+                    else:
+                        self._stop("Défaut AUTO ; réarmement explicite nécessaire")
+                    return
+                if self.auto_suspended and not new_sample:
                     return
                 try:
                     power_w = number(power_w, 0, self.max_power)
@@ -211,6 +236,7 @@ class OutputControl:
                 ma = 0 if power_w == 0 else self.power_curve.current_for_power(power_w)
                 self._write(ma)
                 self.auto_power_w, self.requested_ma = power_w, ma
+                self.auto_suspended = False
                 self.enabled = power_w > 0
                 self.auto_deadline = monotonic() + self.auto_timeout
 
@@ -222,6 +248,7 @@ class OutputControl:
                     "heat_requested": ((self.mode in ("MANUEL", "MANUEL_REEL") and self.manual_percent > 0)
                                        or (self.mode == "AUTO_REEL" and self.auto_power_w > 0)) and self.enabled,
                     "auto_virtual_power_w": self.auto_power_w, "auto_physical_enabled": self.mode in ("AUTO_BANC", "AUTO_REEL") and self.dac.kind == "gp8600",
+                    "auto_suspended": self.auto_suspended,
                     "power_mapping": "MESURES_VALIDEES" if self.power_curve.validated else "PROVISOIRE_SIMULATION_BANC",
                     "connection": self.connection, "reason": self.reason, "error": self.error,
                     "k2_commanded": False, "power_calibrated": self.power_curve.validated,

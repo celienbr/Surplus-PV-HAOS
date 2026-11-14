@@ -35,6 +35,7 @@ from .measurements import Measurement
 from .heartbeat import HeartbeatService, SimulatedGPIO
 from .power_curve import PowerCurve
 from .gpio_v2 import GPIOOutput
+from .async_ha import AsyncControlInputs
 
 LOG = logging.getLogger("surplus_pv_diagnostic")
 MOBILE_INPUTS = Path(__file__).resolve().parent.parent / "web" / "inputs.html"
@@ -241,6 +242,13 @@ def parse_options(source: dict) -> dict:
         raise ValueError('Invalid power curve settings')
     options['heartbeat_task_timeout_s'] = int(source.get('heartbeat_task_timeout_s', 30))
     options['heartbeat_omron_setting_s'] = int(source.get('heartbeat_omron_setting_s', 0))
+    options['heartbeat_autostart'] = source.get('heartbeat_autostart', False)
+    options['heartbeat_period_s'] = source.get('heartbeat_period_s', 0)
+    options['heartbeat_width_s'] = source.get('heartbeat_width_s', 0)
+    if type(options['heartbeat_autostart']) is not bool:
+        raise ValueError('Invalid watchdog autostart option')
+    for name in ('heartbeat_period_s', 'heartbeat_width_s'):
+        number(options[name], 0, 3600)
     if not 1 <= options['heartbeat_task_timeout_s'] <= 300 or not 0 <= options['heartbeat_omron_setting_s'] <= 3600:
         raise ValueError('Invalid watchdog timing')
     return options
@@ -373,12 +381,13 @@ class Diagnostic:
         injected_clock = now is not None
         now = now or datetime.now(timezone.utc)
         generation = self.output.snapshot()['revision']
-        physical_auto_at_start = self.output.snapshot()['mode'] == 'AUTO_REEL'
         meter_observation = None
+        new_sample = False
         with self.lock:
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
-                self._last_meter_report = None
+                if not self.output.snapshot()['auto_suspended']:
+                    self._last_meter_report = None
                 self._control_generation = generation
             # Forecast HTTP work belongs to the profile worker. No forecast
             # dependency may postpone the fast measurement / thermal gate.
@@ -584,20 +593,16 @@ class Diagnostic:
                 }
             try:
                 self.output.observe_auto(self.latest['simulated_boiler_w'], generation,
-                    self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT'))
+                    self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT'),
+                    new_sample=new_sample)
             except (OSError, ValueError):
                 LOG.error('AUTO bench DAC failure; physical output unknown')
             # Progress is a liveness report, not an aggregate sensor-health
             # flag. An invalid AUTO calculation has already been inhibited by
             # observe_auto; MANUEL does not depend on the grid meter at all.
-            # The independent thermal and guard tasks still report their own
-            # failures and a blocked poll cannot refresh this timestamp.
-            auto_valid = self.latest['simulation_state'] in (
-                'AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION')
-            hb = self.heartbeat.heartbeat
-            physical_watchdog = hb is not None and not isinstance(hb.output, SimulatedGPIO)
-            self.heartbeat.progress('main', healthy=(self.output.error is None
-                and (not (physical_auto_at_start or physical_watchdog) or auto_valid)))
+            # The thermal and guard tasks report progress independently; a
+            # blocked poll cannot refresh this timestamp.
+            self.heartbeat.progress('main')
             result = self.snapshot()
         # Persistent recording is outside the regulator lock and never
         # participates in electrical decisions or causes a faulty command.
@@ -707,9 +712,7 @@ class Diagnostic:
                                             self.options['boiler_temperature_max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
-        self.heartbeat.progress('thermal', healthy=(status == 'FRESH'
-            and measurement is not None and measurement.value < self.options['demo_max_c']
-            and self.output.error is None))
+        self.heartbeat.progress('thermal')
 
     def set_output(self, values):
         if not isinstance(values, dict):
@@ -717,37 +720,44 @@ class Diagnostic:
         if values.get('action') == 'mode' and values.get('mode') in ('AUTO_REEL', 'MANUEL_REEL'):
             if not self.options['boiler_temperature_entity']:
                 raise ValueError('Sonde réelle du boiler requise')
-            if values['mode'] == 'MANUEL_REEL':
-                self.heartbeat.stop_for_mode_change()
-                self.output.command(values)
-                return
-            with self.heartbeat.lock:
+            if not self.heartbeat.lock.acquire(blocking=False):
+                raise ValueError('Watchdog occupé ; réessayer')
+            try:
                 hb = self.heartbeat.snapshot()
-                if hb['state'] != 'NORMAL' or hb['driver'] != 'GPIO_REEL':
-                    raise ValueError('Heartbeat GPIO réel sain requis')
-                self.output.command(values)
+            finally:
+                self.heartbeat.lock.release()
+            if hb['state'] != 'NORMAL' or hb['driver'] != 'GPIO_REEL':
+                raise ValueError('Heartbeat GPIO réel sain requis')
+            # Do not hold the GPIO scheduler lock across an I²C transaction.
+            # The guard independently inhibits output if the heartbeat fails.
+            self.output.command(values)
             return
         if values.get('action') == 'stop':
             if set(values) != {'action'}:
                 raise ValueError('Unexpected stop fields')
-            try:
-                self.output.command(values)
-            finally:
-                # Either interface may fail: always attempt both independent stops.
-                self.heartbeat.stop()
+            self.output.command(values)
             return
-        if values.get('action') == 'mode' and values.get('mode') != 'AUTO_REEL':
-            self.heartbeat.stop_for_mode_change()
         self.output.command(values)
 
     def set_heartbeat(self, command):
-        with self.heartbeat.lock:
-            self._set_heartbeat(command)
+        self._set_heartbeat(command)
+
+    def autostart_heartbeat(self):
+        """Start only an explicitly configured production profile, at DAC zero."""
+        if not self.options['heartbeat_autostart']:
+            return False
+        if self.output.dac.kind != 'gp8600' or self.output.connection != 'boiler':
+            raise ValueError('Démarrage watchdog : configurer le DAC réel et le câblage boiler')
+        self.set_heartbeat({'action': 'start', 'driver': 'gpio17', 'confirm': True,
+                            'period_s': self.options['heartbeat_period_s'],
+                            'width_s': self.options['heartbeat_width_s']})
+        return True
 
     def _set_heartbeat(self, command):
         if not isinstance(command, dict):
             raise ValueError('Expected heartbeat command')
         if command == {'action': 'stop'}:
+            self.output.command({'action': 'stop'})
             self.heartbeat.stop()
             return
         if (set(command) != {'action', 'driver', 'confirm', 'period_s', 'width_s'}
@@ -767,10 +777,6 @@ class Diagnostic:
                 raise ValueError('Impulsion GPIO >= 0,05 s et repos >= 0,1 s requis')
             if timeout < 2 * self.options['sample_seconds'] or not omron or timeout + period >= omron:
                 raise ValueError('Configurer le réglage Omron et des délais compatibles avec la période de régulation')
-            if self.output.connection == 'boiler' and not self.output.power_curve.validated:
-                raise ValueError('Courbe puissance/courant mesurée et validée requise')
-            if self.output.snapshot()['mode'] == 'MANUEL_REEL':
-                raise ValueError('Arrêter MANUEL avant de démarrer le heartbeat')
             self.output.prepare_heartbeat()
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
@@ -789,8 +795,8 @@ class Diagnostic:
 
     def guard_output_once(self):
         self.output.check_freshness()
-        self.heartbeat.progress('guard', healthy=self.output.error is None)
-        if (self.output.snapshot()['mode'] == 'AUTO_REEL'
+        self.heartbeat.progress('guard')
+        if (self.output.snapshot()['mode'] in ('AUTO_REEL', 'MANUEL_REEL')
                 and self.heartbeat.snapshot()['state'] != 'NORMAL'):
             self.output.command({'action': 'stop'})
 
@@ -938,7 +944,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.13",
+            "version": "1.0.0-alpha.14",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": self.output.dac.kind == "simulated",
             "temperature_source": self.temperature_source,
@@ -1276,7 +1282,10 @@ def main():
     config_file = Path(os.environ.get("SPV_OPTIONS_FILE", "/data/options.json"))
     options = json.loads(config_file.read_text(encoding="utf-8"))
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN") or ""
-    client = HomeAssistantClient(token) if token else None
+    client = (AsyncControlInputs(HomeAssistantClient(token),
+                                 max_cache_age=max(15, 2 * int(options.get('sample_seconds', 10))),
+                                 process_isolation=True)
+              if token else None)
     store = None
     try:
         store = HistoryStore(os.environ.get("SPV_HISTORY_DB",
@@ -1300,7 +1309,7 @@ def main():
                 diag.guard_output_once()
             except OSError:
                 LOG.error('DAC stop failure; physical output unknown')
-                diag.heartbeat.progress('guard', healthy=False)
+                diag.heartbeat.progress('guard')
             stop.wait(0.25)
     thermal_worker = Thread(target=thermal_loop, daemon=True)
     guard_worker = Thread(target=guard_loop, daemon=True)
@@ -1310,6 +1319,10 @@ def main():
     heartbeat_worker.start()
     worker = Thread(target=diag.loop, args=(stop,), daemon=True)
     worker.start()
+    try:
+        diag.autostart_heartbeat()
+    except (ValueError, OSError) as exc:
+        LOG.error('Démarrage watchdog impossible : %s', exc)
     profile_worker = Thread(target=diag.profile_loop, args=(stop,), daemon=True)
     profile_worker.start()
     def pv_loop():
@@ -1332,6 +1345,8 @@ def main():
         server.serve_forever(poll_interval=0.5)
     finally:
         stop.set()
+        if isinstance(client, AsyncControlInputs):
+            client.close()
         server.server_close()
         try:
             diag.heartbeat.stop()

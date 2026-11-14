@@ -2,6 +2,8 @@
 (()=>{
  const el=id=>document.getElementById(id);
  const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(4):'—';
+ const diagnostic=new URLSearchParams(location.search).get('diagnostic')==='1';
+ if(diagnostic){el('hb-driver').querySelector('[value="simulated"]').hidden=false;el('hb-driver').value='simulated';el('hb-period').value='10';el('hb-width').value='.2';}
  let token=null;
  async function refresh(){
   try{
@@ -13,7 +15,7 @@
  async function send(command){
   if(!token)throw Error('Session non initialisée');
   const r=await fetch('./api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,command})});
-  if(!r.ok)throw Error('Commande refusée (HTTP '+r.status+')');
+  if(!r.ok){let detail='';try{detail=(await r.json()).error||'';}catch(_e){}throw Error('Commande refusée (HTTP '+r.status+')'+(detail?' : '+detail:''));}
  }
  el('hb-start').onclick=async()=>{
   if(!confirm('Confirmer l’activation du heartbeat sélectionné et les vérifications de raccordement ?'))return;

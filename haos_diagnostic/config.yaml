@@ -1,18 +1,18 @@
-name: "Surplus PV - Diagnostic (sans puissance)"
+name: "Surplus PV"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.13"
-description: "AUTO virtuel, GP8600 explicite en banc ou manuel Boiler"
+version: "1.0.0-alpha.14"
+description: "Gestion du surplus photovoltaïque et du chauffe-eau"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
   - aarch64
 init: false
 startup: application
-boot: manual
+boot: auto
 stage: experimental
 homeassistant_api: true
 ingress: true
 ingress_port: 8099
-panel_title: "Surplus PV - Test"
+panel_title: "Surplus PV"
 panel_icon: "mdi:solar-power"
 panel_admin: true
 devices:
@@ -26,6 +26,9 @@ options:
   power_curve_confirmed: false
   heartbeat_task_timeout_s: 30
   heartbeat_omron_setting_s: 0
+  heartbeat_autostart: false
+  heartbeat_period_s: 0
+  heartbeat_width_s: 0
   pi_entity: sensor.gplugk_z_pi
   po_entity: sensor.gplugk_z_po
   sample_seconds: 10
@@ -83,6 +86,9 @@ schema:
   power_curve_confirmed: bool
   heartbeat_task_timeout_s: "int(1,300)"
   heartbeat_omron_setting_s: "int(0,3600)"
+  heartbeat_autostart: bool
+  heartbeat_period_s: "float(0,3600)"
+  heartbeat_width_s: "float(0,3600)"
   pi_entity: str
   po_entity: str
   sample_seconds: "int(5,60)"

@@ -1,203 +1,53 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.13
+# Surplus PV — Home Assistant OS 1.0.0-alpha.14
 
-Version 1.0.0-alpha.13 : simulation, BANC DAC, MANUEL et AUTO réel conditionné.
-Application ARM64 (aarch64), simulation par défaut, GP8600 explicitement sélectionnable.
-Tableau de bord : réseau gPlugK et prévisions. L'acquisition AC Sofar optionnelle
-fournit les index de production et l'autoconsommation conditionnelle. Sans configuration,
-PV réelle et autoconsommation restent indisponibles. Prévisions Forecast.Solar séparées des mesures.
-Planification de confort et trajectoire 48 h conservées.
+Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
+confort 48 h. Le GP8600 peut commander le chauffe-eau après configuration.
+La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.12 et configuration réelle
+## Mise à jour depuis alpha.13
 
-Dans Home Assistant, sauvegarder l'add-on et ses données /data, puis mettre à jour
-Surplus PV depuis la page de l'add-on. Le slug reste `surplus_pv_diagnostic` ;
-aucune réinstallation ni suppression de SQLite n'est demandée. En cas de retour
-arrière, sauvegarder les données récentes puis restaurer la sauvegarde alpha.12
-de la même application ; une restauration peut remplacer les données récentes.
+1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
+   données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
+2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
+   ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
+   désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
+3. Vérifier la version 1.0.0-alpha.14, les réglages de confort et les historiques.
+   Les bases SQLite et les préférences restent dans /data.
 
-Dans les options de l'add-on, sélectionner `dac_driver: gp8600`,
-`dac_connection: boiler`, l'adresse I²C effective et `boiler_temperature_entity`.
-Renseigner `power_curve_points` comme liste JSON de couples `[W, mA]` issus de
-mesures, strictement croissants, couvrant 0 à la puissance maximale configurée ;
-les courants sont compris entre 4 et 20 mA. Après vérification par le propriétaire,
-mettre `power_curve_confirmed: true`. L'interpolation est bornée ; les relevés DAC
-sur résistance ne sont pas des mesures de puissance du chauffe-eau. Sans cette
-confirmation AUTO réel et son heartbeat GPIO sont refusés.
+## Configuration réelle
 
-Renseigner `heartbeat_omron_setting_s` avec le réglage matériel effectif ; zéro
-interdit l'activation GPIO. `heartbeat_task_timeout_s` doit être au moins deux
-fois `sample_seconds`, et sa somme avec la période d'impulsion doit être inférieure
-au réglage Omron renseigné. L'impulsion doit durer au moins 50 ms, le repos 100 ms.
-Dans Configuration, démarrer explicitement le heartbeat GPIO17, puis dans Boiler
-sélectionner AUTO ; ARRÊT annule la consigne, MANUEL règle directement le DAC et
-reste indépendant du compteur et du heartbeat. Un défaut mémorisé nécessite un
-arrêt explicite du heartbeat, la correction de sa cause, puis un réarmement.
-Le voyant est matériel, aucun contact Omron ou K2 n'est lu par l'application.
-En cas d'erreur I²C, la sortie physique est inconnue ; la récupération à zéro et
-la sélection d'un mode sont explicites. Aucune ancienne consigne n'est reprise.
+Renseigner `dac_driver: gp8600`, `dac_connection: boiler`, l'adresse I²C et
+`boiler_temperature_entity` de la sonde d'eau. Pour AUTO réel, saisir les couples
+mesurés `[W, mA]` strictement croissants dans `power_curve_points`, couvrant
+la plage de puissance configurée, puis confirmer par `power_curve_confirmed`.
+Sans courbe validée, AUTO réel reste indisponible. Un accusé I²C ne mesure ni le
+courant ni la puissance, et zéro demandé ne prouve pas une coupure physique.
 
-## Sonde du boiler
+Pour démarrer le watchdog avec le service, définir `heartbeat_autostart: true`,
+`heartbeat_period_s`, `heartbeat_width_s`, `heartbeat_task_timeout_s` et
+`heartbeat_omron_setting_s` selon le matériel. La période et la durée d'impulsion
+sont nulles par défaut : les renseigner avec les valeurs établies sur l'installation.
+Le réglage Omron doit dépasser la somme du timeout et de la période ; le timeout
+est au moins deux fois l'intervalle d'échantillonnage. L'impulsion doit durer au
+moins 50 ms et le repos au moins 100 ms. Une configuration incomplète empêche
+le démarrage automatique et produit une erreur dans le journal. Aucun ancien
+ordre de chauffe n'est repris au démarrage.
 
-Configurer dans Home Assistant l'entité `boiler_temperature_entity` correspondant
-à la sonde située dans l'eau. Une température absente ou périmée est inconnue ;
-une valeur de démonstration n'autorise pas la commande réelle. Les données et
-options historiques de sonde hors boiler sont conservées mais ne sont plus
-affichées dans l'interface active.
-
-La fraîcheur thermique est indépendante de celle du compteur :
-`boiler_temperature_max_age_seconds` vaut 60 s par défaut (10–300 s).
-Ce seuil conserve la limite antérieure ; la cadence de la sonde installée n'a
-pas été vérifiée. `last_reported` indique un
-rapport HA, sans prouver une nouvelle conversion physique. Vérifier la cadence
-et les protections indépendantes avant tout ajustement. Une lecture HTTP
-répétée ne renouvelle pas l'horodatage de mesure.
-
-### Lecture vivante et jauge — alpha.12
-
-La lecture de la sonde utilise le service HA `/api/template` pour obtenir
-valeur, unité et `last_reported` depuis le même état courant. Un refus du
-service, une réponse invalide ou une mesure périmée inhibe la chauffe ;
-la permission du jeton Supervisor et le comportement de la sonde doivent être
-vérifiés sur votre installation. La jauge indique une consigne logicielle,
-non une puissance mesurée ; simulation et banc sont identifiés et l'état
-physique reste non vérifié.
-
-Pour mettre à jour alpha.11, sauvegarder Home Assistant et /data, puis mettre
-à jour l'application existante sans changer son slug. Vérifier les diagnostics
-sans activer de sortie physique. En cas de problème, restaurer la sauvegarde
-alpha.11 complète après avoir sauvegardé les nouvelles données.
-
-### Rafraîchissement autonome du boiler — alpha.10
-
-Par défaut, le rafraîchissement actif est désactivé. Après sauvegarde,
-une fois la version installée et la sonde vérifiée, définir dans les
-options Home Assistant de Surplus PV :
-
-    boiler_temperature_entity: sensor.temperature_boiler
-    boiler_temperature_refresh_enabled: true
-    boiler_temperature_refresh_seconds: 15
-    boiler_temperature_max_age_seconds: 60
-
-Surplus PV demande alors uniquement l'action Home Assistant
-`homeassistant.update_entity` pour la sonde boiler configurée, au plus une
-fois toutes les 15 s (plage 10–120 s), puis relit l'état HA. Cette requête
-ne prouve pas une nouvelle conversion DS18B20 : en cas de température
-inconnue ou périmée, les protections thermiques et le défaut heartbeat
-restent applicables. Aucun accès direct au bus 1-Wire, aucun privilège ou
-nouveau contrôle physique. Ne désactiver l'automatisation HA de 15 s que
-lorsque le fonctionnement du nouvel appel est constaté dans les journaux
-et l'horodatage `last_reported`.
-
-### Correction de surveillance de la sonde — alpha.11
-
-L'application réutilise pour la régulation la même mesure réelle déjà validée
-par la boucle de protection thermique. Un second GET Home Assistant dans la
-régulation n'est plus nécessaire. Dans l'écran Boiler, consulter la ligne
-« Sonde » : statut FRESH/STALE/FUTURE/UNAVAILABLE, valeur reçue, âge du rapport,
-résultat de la dernière action HA et raison de rejet. Le journal utilise la
-température réelle et non la démonstration. La fraîcheur de l'écran Boiler
-est maintenant celle de la sonde (60 secondes), non du compteur réseau.
-
-Conserver la configuration alpha.10 existante (active refresh 15 s si activé).
-Le service update_entity ne peut garantir une acquisition physique de la
-DS18B20. Si l'intégration Home Assistant ne fournit pas de mesure
-récente, l'application **refuse toujours la chauffe** : le correctif ne
-fabrique ni température ni horodatage et n'efface pas le défaut du heartbeat.
-L'état NORMAL GPIO17/Omron/K2 doit être validé séparément et ne doit pas être
-forcé par le logiciel. Les réserves matérielles B01–B10 restent ouvertes.
-
-
-Le heartbeat dépend des boucles de régulation, thermique et de garde DAC ; un compteur perdu
-ne valide pas une consigne AUTO ancienne. Aucun appoint autonome n'est créé en
-cas de perte du compteur. Atteindre le plafond inhibe la demande de chauffe.
-La sélection physique K2 et les temporisations Omron restent à vérifier.
-
-GP8600 réel : dac_driver=gp8600, dac_i2c_address=88..95, bus /dev/i2c-1.
-DAC 16 bits, 0–20 mA. Le heartbeat utilise GPIO17 ; aucun service HA ne commande K2.
-dac_connection=bench : uniquement banc isolé sur résistance, jamais CELDUC.
-dac_connection=boiler : AUTO et MANUEL réels exigent sélection explicite et
-sonde réelle valide. AUTO exige un heartbeat GPIO sain ; MANUEL ne dépend pas
-de son état logiciel. La sélection physique de la source dépend du câblage
-et de l’Omron : une consigne MANUELLE ne prouve pas que le DAC pilote le CELDUC. Le courant 4–20 mA n'est pas une
-mesure de puissance ; AUTO réel exige une courbe de puissance mesurée et confirmée. À l'arrêt
-ou à 0 % réel le logiciel demande zéro, mais une isolation matérielle de chauffe
-indépendante reste à confirmer. La commutation Omron mode E n'est pas instantanée.
-Au redémarrage : aucune consigne reprise ; la sortie physique reste inconnue
-tant que les circuits et leur état ne sont pas vérifiés.
-Erreur I²C : sortie inconnue, reprise explicite à zéro, aucune ancienne consigne
-rejouée. Une coupure logicielle n'est pas une coupure électrique indépendante.
-BANC DAC : curseur/saisie immédiats 0–20 mA, sortie activable ; aucune régulation,
-prévision, température Boiler ou planification ne modifie ce courant. Relevés
-multimètre stockés séparément dans /data/surplus_pv_dac.sqlite3 ; correction
-linéaire proposée mais non appliquée sans revue des mesures et des extrémités.
-Résistance nominale 250 Ω ±1 %, ≥0,5 W : 20 mA donne 5 V et 0,1 W.
-La conformité de charge/alimentation et le montage isolé sont à vérifier en VAL.
-La communication I²C ne prouve aucune mesure physique. Simulation identifiée.
-Seuls /dev/i2c-1 et /dev/gpiochip0 sont exposés ; aucun privilège général ajouté. Le bus doit être
-activé dans HAOS par le propriétaire selon la documentation officielle avant
-un essai autorisé. Dockerfile inchangé : os/fcntl font partie de Python Linux.
-Tests GitHub Actions sans matériel ; Pi, mesures et intégration non validés.
-
-## Mise à jour depuis 1.0.0-alpha.10
-
-1. Dans Home Assistant, noter la version, le dépôt et l'identifiant exact de
-   l'application installée. Conserver le dépôt et la même application.
-2. Toujours sauvegarder les données avant la mise à jour. Créer une sauvegarde Home Assistant incluant cette application et ses
-   données, puis la télécharger hors du Pi. Conserver la clé du kit d'urgence
-   si la sauvegarde est chiffrée. Vérifier que la sauvegarde est terminée.
-   En cas de doute sur son contenu ou sa restauration, ne pas mettre à jour.
-3. Relever les réglages, notamment confort, Forecast.Solar, PAC ; exporter
-   l'historique utile. Le CSV seul ne remplace pas la sauvegarde SQLite.
-   Si une copie manuelle de /data est réalisée par une méthode autorisée,
-   arrêter l'application avant de copier la base et ses fichiers WAL/SHM ;
-   ne jamais copier uniquement une base SQLite active.
-4. Paramètres → Applications (ou Modules complémentaires) → Boutique →
-   Rechercher les mises à jour, puis ouvrir l'application Surplus PV existante.
-   Vérifier que la version proposée est 1.0.0-alpha.13, puis choisir Mettre à jour.
-   Ne pas installer une deuxième application, changer d'URL de dépôt, ni
-   désinstaller l'application en service. Si la version n'est pas proposée,
-   vérifier la publication et actualiser la boutique ; ne pas réinstaller.
-5. Après redémarrage, vérifier la version 1.0.0-alpha.13, les réglages conservés,
-   les anciennes archives, le graphique 48 h et le planificateur de confort.
-   Vérifier le signe import/export et la disponibilité des mesures. Le pilote doit rester simulé tant que la validation physique n’est pas autorisée.
-
-Les tables SQLite antérieures sont conservées. Une table PV additive est créée
-uniquement si une source PV est configurée. Données persistantes :
-/data/surplus_pv_history.sqlite3 et /data/surplus_pv_user_settings.json.
-Les options PV sont facultatives ; les trois entités sont vides par défaut.
-Pour une installation Sofar déjà vérifiée dans Home Assistant, configurer sans
-écraser les autres réglages :
-
-    pv_actual_power_entity: sensor.inverter_power
-    pv_actual_energy_today_entity: sensor.inverter_today_production
-    pv_actual_energy_total_entity: sensor.inverter_total_production
-
-Choisir la puissance AC (Power du profil sofar_g3, pas PV Power DC).
-Confirmer pv_self_consumption_topology_verified uniquement si toute la production
-AC est couverte, sans stockage ni autre flux non comptabilisé. La valeur par défaut
-reste false ; une confirmation sur une installation ne vaut pas pour les autres.
-Acquisition facultative toutes les 60 s, fraîcheur HA 120 s, réglables dans
-pv_actual_sample_seconds et pv_actual_max_age_seconds. Les mesures réseau et
-le confort n'attendent pas ces lectures. Le calcul nécessite deux canaux réseau
-récents et un décalage PV/réseau de 15 s maximum. Les anomalies ne sont pas bornées
-silencieusement à zéro. Les nouvelles observations sont conservées dans une table
-SQLite additive ; désactiver les entités arrête la collecte sans effacer l'historique.
-Publication logicielle 1.0.0-alpha.13 demandée par le propriétaire ; sauvegarde et mise
-à jour Home Assistant effectuées par lui. Cette publication ne vaut pas validation physique. Les lectures et performances
-sur Raspberry Pi restent à réceptionner après la mise à jour.
-La fraîcheur se rapporte aux rapports HA, pas à l'horodatage physique du compteur.
+En ARRÊT, la chauffe n'est pas demandée. En AUTO, la demande dépend des mesures
+et du plan de confort. En MANUEL, elle dépend du réglage utilisateur et de la
+protection thermique. Une mesure absente ou périmée inhibe les commandes qui en
+ont besoin ; le watchdog continue si les tâches critiques progressent. La perte
+d'impulsions signale une défaillance du logiciel ; le relais Omron ne connaît
+ni les prévisions ni l'heure de confort. S1 et K2 ne disposent pas de retour
+mesuré dans l'application ; S2 est le secours matériel. Les protections thermiques
+indépendantes restent nécessaires.
 
 ## Retour arrière
 
-En cas d'anomalie, arrêter l'application et conserver les journaux et les
-nouvelles données. Home Assistant ne propose pas toujours un bouton de
-rétrogradation : restaurer la sauvegarde préalable de la même application
-avec sa version, sa configuration et ses données, via Paramètres → Système →
-Sauvegardes, selon la version HA. Une restauration remplace les données par
-leur état sauvegardé : préserver séparément les acquisitions postérieures
-avant de restaurer. Ne pas écraser la sauvegarde d'origine, supprimer /data
-ou désinstaller pour tenter un retour arrière. Si la restauration exige une
-intervention supplémentaire, demander une procédure adaptée avant de continuer.
+Sauvegarder d'abord les données et journaux récents. Dans Paramètres → Système →
+Sauvegardes, restaurer la sauvegarde alpha.13 de la même application. Cette
+restauration remplace les données par leur état sauvegardé : préserver séparément
+les acquisitions postérieures. Ne pas supprimer /data ni désinstaller l'add-on.
 
-Le paquet ne contient ni réglage privé ni données réelles. L'absence de données
-anciennes n'est jamais comblée artificiellement. Aucun essai sur Pi ni validation de mesures réelles n’est déduit des tests logiciels.
+La mise à jour et les essais logiciels ne constituent pas une validation physique
+des contacts, des températures, des courants ou de la chaîne thermique.

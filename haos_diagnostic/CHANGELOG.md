@@ -1,5 +1,13 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.14 — candidat
+
+Supervision de la progression logicielle indépendante des mesures ; acquisitions
+HA isolées, reprise AUTO après une nouvelle mesure valide et démarrage watchdog
+configurable. La commande réelle reste conditionnée aux paramètres et à la
+calibration applicables. Les états des contacts et les protections physiques ne
+sont pas mesurés par l'application.
+
 ## 1.0.0-alpha.13 — candidat
 
 Courbe mesurée obligatoire pour AUTO réel, surveillance de la régulation et temporisations watchdog explicites. Aucun redémarrage automatique de commande.
