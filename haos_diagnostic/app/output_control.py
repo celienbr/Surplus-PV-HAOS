@@ -135,6 +135,8 @@ class OutputControl:
                         return
                 if mode == "AUTO_REEL" and (not self._temperature_ok(now) or self.temperature.value >= self.ceiling):
                     raise ValueError("Température réelle valide sous le plafond requise")
+                if mode == "AUTO_REEL" and not self.power_curve.validated:
+                    raise ValueError("Courbe puissance/courant mesurée et validée requise")
                 if self.dac.kind == "gp8600":
                     required = "bench" if mode in ("BANC_DAC", "MANUEL_BANC", "AUTO_BANC") else "boiler"
                     if mode != "AUTO" and self.connection != required:
@@ -220,9 +222,9 @@ class OutputControl:
                     "heat_requested": ((self.mode in ("MANUEL", "MANUEL_REEL") and self.manual_percent > 0)
                                        or (self.mode == "AUTO_REEL" and self.auto_power_w > 0)) and self.enabled,
                     "auto_virtual_power_w": self.auto_power_w, "auto_physical_enabled": self.mode in ("AUTO_BANC", "AUTO_REEL") and self.dac.kind == "gp8600",
-                    "power_mapping": "PROVISOIRE_NON_QUALIFIE" if self.mode == "AUTO_REEL" else "PROVISOIRE_SIMULATION_BANC",
+                    "power_mapping": "MESURES_VALIDEES" if self.power_curve.validated else "PROVISOIRE_SIMULATION_BANC",
                     "connection": self.connection, "reason": self.reason, "error": self.error,
-                    "k2_commanded": False, "power_calibrated": False,
+                    "k2_commanded": False, "power_calibrated": self.power_curve.validated,
                     "temperature_c": self.temperature.value if self.temperature else None,
                     "temperature_at": self.temperature.measured_at.isoformat() if self.temperature else None,
                     "thermal_ceiling_c": self.ceiling,

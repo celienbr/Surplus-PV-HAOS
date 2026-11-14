@@ -1,5 +1,9 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.13 — candidat
+
+Courbe mesurée obligatoire pour AUTO réel, surveillance de la régulation et temporisations watchdog explicites. Aucun redémarrage automatique de commande.
+
 ## 1.0.0-alpha.12 — lecture thermique et jauge de consigne
 
 - Lecture de la température, unité et date de rapport via le modèle HA vivant ; échec fermé si la réponse est indisponible ou invalide. Les droits et la sonde doivent être vérifiés sur l’installation.
