@@ -11,6 +11,7 @@ from time import monotonic
 
 from .gp8600 import number
 from .power_curve import PowerCurve
+from .boiler_temperature import valid_boiler_temperature
 
 
 class OutputControl:
@@ -62,19 +63,28 @@ class OutputControl:
         try:
             self.dac.set_current(ma)
         except OSError as exc:
-            self._clear("Erreur DAC ; reprise explicite à zéro nécessaire")
+            if self.mode == 'AUTO_REEL':
+                # Retain operator intent while no output is trusted. Recovery
+                # must reinitialize at zero and wait for a new meter report.
+                self.revision += 1
+                self.enabled = False
+                self.auto_suspended = True
+                self.auto_power_w = self.requested_ma = 0.
+                self.auto_deadline = None
+                self.reason = 'Erreur DAC ; AUTO inhibé, sortie physique inconnue'
+            else:
+                self._clear("Erreur DAC ; reprise explicite à zéro nécessaire")
             self.error = str(exc)[:160]
             raise
 
     def _temperature_ok(self, now):
         t = self.temperature
-        return (t is not None and t.valid(now, self.max_age)
-                and 0 <= t.value <= 90)
+        return valid_boiler_temperature(t, now, self.max_age)
 
     def observe_temperature(self, measurement, ceiling, max_age, now=None):
         now = now or datetime.now(timezone.utc)
         with self.lock:
-            valid = measurement is not None and measurement.valid(now, max_age) and 0 <= measurement.value <= 90
+            valid = valid_boiler_temperature(measurement, now, max_age)
             self.temperature, self.ceiling, self.max_age = measurement if valid else None, ceiling, max_age
             if self.mode in ("MANUEL", "MANUEL_BANC", "MANUEL_REEL", "AUTO_REEL"):
                 if self.mode == "AUTO_REEL" and (not self._temperature_ok(now) or self.temperature.value >= ceiling):
@@ -227,6 +237,8 @@ class OutputControl:
                     return
                 if self.auto_suspended and not new_sample:
                     return
+                if self.mode == 'AUTO_REEL' and not self.dac.ready:
+                    return
                 try:
                     power_w = number(power_w, 0, self.max_power)
                 except ValueError:
@@ -236,6 +248,8 @@ class OutputControl:
                 ma = 0 if power_w == 0 else self.power_curve.current_for_power(power_w)
                 self._write(ma)
                 self.auto_power_w, self.requested_ma = power_w, ma
+                if self.auto_suspended:
+                    self.reason = 'AUTO actif : mesures valides'
                 self.auto_suspended = False
                 self.enabled = power_w > 0
                 self.auto_deadline = monotonic() + self.auto_timeout

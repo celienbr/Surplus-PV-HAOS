@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.14
+# Surplus PV — Home Assistant OS 1.0.0-alpha.15
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort 48 h. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.13
+## Mise à jour depuis alpha.14
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.14, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.15, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 ## Configuration réelle
@@ -31,7 +31,9 @@ Le réglage Omron doit dépasser la somme du timeout et de la période ; le time
 est au moins deux fois l'intervalle d'échantillonnage. L'impulsion doit durer au
 moins 50 ms et le repos au moins 100 ms. Une configuration incomplète empêche
 le démarrage automatique et produit une erreur dans le journal. Aucun ancien
-ordre de chauffe n'est repris au démarrage.
+ordre de chauffe n'est repris au démarrage. AUTO est demandé dès le démarrage ;
+il reste inhibé tant que le watchdog, la sonde, la calibration ou les mesures
+nécessaires ne sont pas valides. Une température supérieure à 83 °C est invalide.
 
 En ARRÊT, la chauffe n'est pas demandée. En AUTO, la demande dépend des mesures
 et du plan de confort. En MANUEL, elle dépend du réglage utilisateur et de la
@@ -45,7 +47,7 @@ indépendantes restent nécessaires.
 ## Retour arrière
 
 Sauvegarder d'abord les données et journaux récents. Dans Paramètres → Système →
-Sauvegardes, restaurer la sauvegarde alpha.13 de la même application. Cette
+Sauvegardes, restaurer la sauvegarde alpha.14 de la même application. Cette
 restauration remplace les données par leur état sauvegardé : préserver séparément
 les acquisitions postérieures. Ne pas supprimer /data ni désinstaller l'add-on.
 
