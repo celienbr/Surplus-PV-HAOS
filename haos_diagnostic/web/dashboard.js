@@ -23,8 +23,15 @@ function render(p){
  const measuredAt=Date.parse(output.temperature_at||'');
  const age=(Date.now()-measuredAt)/1000;
  const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
-  Number.isFinite(age)&&age>=-2&&age<=(o.max_age_seconds??60);
+  Number.isFinite(age)&&age>=-2&&age<=(o.boiler_temperature_max_age_seconds??60);
  const target=manual?output.target_c:(w.status==='ADAPTIVE'?w.target_c:o.demo_max_c);
+ text('summary-mode',modeText);
+ text('summary-water',measured?celsius(output.temperature_c):'Inconnue');
+ text('summary-target',celsius(target));
+ text('summary-heat',output.heat_requested?'Chauffe demandée':'Aucune chauffe demandée');
+ text('summary-power',automatic?watts(output.auto_virtual_power_w):'Non disponible');
+ text('summary-watchdog',p.heartbeat?.state||'Inconnu');
+ text('summary-alert',output.auto_suspended||output.startup_pending?(output.reason||'AUTO inhibé'):p.status==='FAULT'?(p.error||'Mesures indisponibles'):'');
  text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
  text('input-target',celsius(target));
  text('input-mode',modeText);
@@ -204,3 +211,11 @@ boilerFrame.addEventListener('load',()=>{
   new ResizeObserver(resize).observe(main);resize();
  }catch(e){boilerFrame.style.height='900px';}
 });
+
+function openLinkedDetails(){
+ const id=decodeURIComponent(location.hash.slice(1));
+ const target=id&&document.getElementById(id);
+ if(target){for(let node=target;node;node=node.parentElement){if(node.tagName==='DETAILS')node.open=true;}}
+}
+window.addEventListener('hashchange',openLinkedDetails);openLinkedDetails();
+document.querySelector('#profil').addEventListener('toggle',()=>window.dispatchEvent(new Event('resize')));

@@ -1,5 +1,9 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.15 — candidat
+
+AUTO demandé au démarrage sous conditions de sécurité, protection sonde > 83 °C et interface simplifiée.
+
 ## 1.0.0-alpha.14 — candidat
 
 Supervision de la progression logicielle indépendante des mesures ; acquisitions
