@@ -60,6 +60,10 @@ class AsyncControlInputs:
         self.stop = Event()
         self.lock = Lock()
         self.entries = {}
+        self.grid_wake = Event()
+        self.last_grid_read_stamp = None
+        self.grid_generation = 0
+        self.last_grid_read_generation = None
 
     def __getattr__(self, name):
         method = getattr(self.client, name)
@@ -74,6 +78,9 @@ class AsyncControlInputs:
                     entry['pending'] = True
                     Thread(target=self._fetch, args=(key, method, args), daemon=True).start()
                 stamp, value, error = entry['stamp'], entry['value'], entry['error']
+                if name in ('read_gplugk_states', 'read_gplugk_grid_w'):
+                    self.last_grid_read_stamp = stamp
+                    self.last_grid_read_generation = self.grid_generation
             if stamp is not None and 0 <= self.clock() - stamp <= self.max_cache_age:
                 return value
             raise RuntimeError(error or 'Acquisition Home Assistant en attente')
@@ -81,16 +88,27 @@ class AsyncControlInputs:
 
     def _fetch(self, key, method, args):
         once = key[0] == 'request_boiler_temperature_refresh'
+        grid = key[0] in ('read_gplugk_states', 'read_gplugk_grid_w')
         while not self.stop.is_set():
             try:
                 value = (isolated_call(method, args, self.request_timeout)
                          if self.process_isolation else method(*args))
             except Exception as exc:
                 with self.lock:
+                    changed = self.entries[key]['stamp'] is not None or self.entries[key]['error'] is None
                     self.entries[key].update(stamp=None, error=str(exc)[:160])
+                    if grid and changed:
+                        self.grid_generation += 1
             else:
                 with self.lock:
+                    changed = self.entries[key]['stamp'] is None or self.entries[key]['value'] != value
                     self.entries[key].update(value=value, stamp=self.clock(), error=None)
+                    if grid and changed:
+                        self.grid_generation += 1
+            # Wake after publishing the cache. Repeated identical HA reports
+            # do not cause extra regulation cycles or manufacture samples.
+            if grid and changed:
+                self.grid_wake.set()
             if once or self.stop.wait(self.refresh_interval):
                 break
         with self.lock:
@@ -98,3 +116,4 @@ class AsyncControlInputs:
 
     def close(self):
         self.stop.set()
+        self.grid_wake.set()

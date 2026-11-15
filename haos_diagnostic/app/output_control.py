@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from threading import RLock
-from time import monotonic
+from time import monotonic, monotonic_ns
 
 from .gp8600 import number
 from .boiler_temperature import valid_boiler_temperature
@@ -30,6 +30,9 @@ class OutputControl:
         self.ceiling = 70.
         self.max_age = 60.
         self.error = None
+        self.last_i2c = None
+        self.i2c_writes = 0
+        self.i2c_avoided = 0
 
     def _initialize(self):
         try:
@@ -49,9 +52,12 @@ class OutputControl:
         self.reason = reason
 
     def _write(self, ma):
+        start = monotonic_ns()
+        self.i2c_writes += 1
         try:
             self.dac.set_current(ma)
         except OSError as exc:
+            self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ERROR'}
             if self.mode == 'AUTO_REEL':
                 # Retain operator intent while no output is trusted. Recovery
                 # must reinitialize at zero and wait for a new meter report.
@@ -65,6 +71,7 @@ class OutputControl:
                 self._clear("Erreur DAC ; reprise explicite à zéro nécessaire")
             self.error = str(exc)[:160]
             raise
+        self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ACK'}
 
     def _temperature_ok(self, now):
         t = self.temperature
@@ -206,13 +213,25 @@ class OutputControl:
                     self._stop("Consigne AUTO invalide ; réarmement explicite nécessaire")
                     raise
                 ma = 0 if power_w == 0 else self.power_curve.current_for_power(power_w)
-                self._write(ma)
+                # An unchanged, previously acknowledged command requires no
+                # additional I²C transaction. Recovery always initializes at
+                # zero and stale/thermal faults still use the stop path.
+                sent = ma != self.requested_ma
+                if sent:
+                    try:
+                        self._write(ma)
+                    except OSError as exc:
+                        exc.i2c_timing = dict(self.last_i2c)
+                        raise
+                else:
+                    self.i2c_avoided += 1
                 self.auto_power_w, self.requested_ma = power_w, ma
                 if self.auto_suspended:
                     self.reason = 'AUTO actif : mesures valides'
                 self.auto_suspended = False
                 self.enabled = power_w > 0
                 self.auto_deadline = monotonic() + self.auto_timeout
+                return dict(self.last_i2c) if sent else None
 
     def snapshot(self):
         with self.lock:
@@ -223,6 +242,8 @@ class OutputControl:
                                        or (self.mode == "AUTO_REEL" and self.auto_power_w > 0)) and self.enabled,
                     "auto_requested_power_w": self.auto_power_w, "auto_physical_enabled": self.mode == "AUTO_REEL",
                     "auto_suspended": self.auto_suspended,
+                    "last_i2c": self.last_i2c, "i2c_writes": self.i2c_writes,
+                    "i2c_avoided": self.i2c_avoided,
                     "power_mapping": "MESURES_VALIDEES" if self.power_curve and self.power_curve.validated else "NON_CONFIGUREE",
                     "connection": self.connection, "reason": self.reason, "error": self.error,
                     "k2_commanded": False, "power_calibrated": bool(self.power_curve and self.power_curve.validated),

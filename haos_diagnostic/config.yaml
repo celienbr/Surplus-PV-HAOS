@@ -1,6 +1,6 @@
 name: "Surplus PV"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.16"
+version: "1.0.0-alpha.17"
 description: "Gestion du surplus photovoltaïque et du chauffe-eau"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
