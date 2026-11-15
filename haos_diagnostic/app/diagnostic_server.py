@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread, Event
+from queue import Queue, Full, Empty
 import json
 import logging
 import os
@@ -293,7 +294,11 @@ class Diagnostic:
         self._last_thermal_log_status = None
         self.refresh_control_temperature_once()
         self._last_meter_report = None
+        self._last_meter_reports = None
         self._last_poll_at = None
+        self.control_timing = None
+        self.control_sample_count = 0
+        self.control_last_sample_ns = None
         self.comfort = {"status": "WAITING", "reason": "En attente de mesures valides.",
                         "backup_power_w": 0}
         self.water_temperature_c = None
@@ -301,6 +306,10 @@ class Diagnostic:
                                    else "UNCONFIGURED")
         self.client = client
         self.history_store = history_store
+        self.record_queue = None
+        self.record_worker = None
+        self.record_stop = Event()
+        self.record_dropped = 0
         self.energy_dashboard = EnergyDashboard(history_store) if history_store else None
         self.pv_actual = PVAcquisition(self.options, self.client, history_store)
         self._last_logged_status = None
@@ -348,11 +357,14 @@ class Diagnostic:
         generation = self.output.snapshot()['revision']
         meter_observation = None
         new_sample = False
+        timing = None
+        grid_generation = None
         with self.lock:
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
                 if not self.output.snapshot()['auto_suspended']:
                     self._last_meter_report = None
+                    self._last_meter_reports = None
                 self._control_generation = generation
             # Forecast HTTP work belongs to the profile worker. No forecast
             # dependency may postpone the fast measurement / thermal gate.
@@ -366,6 +378,8 @@ class Diagnostic:
                 if hasattr(self.client, "read_gplugk_states"):
                     raw_pi, raw_po = self.client.read_gplugk_states(
                         self.options["pi_entity"], self.options["po_entity"])
+                    if isinstance(self.client, AsyncControlInputs):
+                        grid_generation = self.client.last_grid_read_generation
                     if not injected_clock:
                         now = datetime.now(timezone.utc)
                     self.sensor_diagnostics = {
@@ -397,11 +411,17 @@ class Diagnostic:
                                if s and s["health"] == "FRESH"]
                     meter_report = max(reports) if reports else None
                     freshness_report = min(reports) if reports else None
+                    meter_reports = tuple(_read_kw_state(raw, entity).measured_at for raw, entity in (
+                        (raw_pi, self.options['pi_entity']), (raw_po, self.options['po_entity'])))
+                    meter_fresh = tuple(self.sensor_diagnostics[name]['health'] == 'FRESH'
+                                        for name in ('pi', 'po'))
                 else:
                     # Backward-compatible pure unit-test client.
                     self.sensor_diagnostics = {"pi": None, "po": None}
                     measured = self.client.read_gplugk_grid_w(
                         self.options["pi_entity"], self.options["po_entity"])
+                    if isinstance(self.client, AsyncControlInputs):
+                        grid_generation = self.client.last_grid_read_generation
                     if not injected_clock:
                         now = datetime.now(timezone.utc)
                     age = (now - measured.measured_at).total_seconds()
@@ -410,6 +430,8 @@ class Diagnostic:
                     meter_w = measured.value
                     meter_report = measured.measured_at
                     freshness_report = measured.measured_at
+                    meter_reports = (meter_report,)
+                    meter_fresh = (True,)
 
                 # Preserve the meter diagnosis independently of later thermal
                 # or planner failures; it must still be recent when displayed.
@@ -450,9 +472,25 @@ class Diagnostic:
                 if self._last_poll_at is not None and now < self._last_poll_at:
                     raise ValueError("Clock moved backwards; awaiting a new valid cycle")
                 self._last_poll_at = now
-                if self._last_meter_report is not None and meter_report < self._last_meter_report:
+                if self._last_meter_reports is not None and any(
+                        current < previous for current, previous in zip(meter_reports, self._last_meter_reports)):
                     raise ValueError("Meter report moved backwards")
-                new_sample = meter_report != self._last_meter_report
+                new_sample = (self._last_meter_reports is None or any(
+                    fresh and current > previous for current, previous, fresh
+                    in zip(meter_reports, self._last_meter_reports, meter_fresh)))
+                if new_sample:
+                    receipt = getattr(self.client, 'last_grid_read_stamp', None)
+                    validated = time.monotonic_ns()
+                    interval_ms = ((validated - self.control_last_sample_ns) / 1e6
+                                   if self.control_last_sample_ns is not None else None)
+                    self.control_last_sample_ns = validated
+                    self.control_sample_count += 1
+                    timing = {'ha_report_at': meter_report.isoformat(),
+                              'ha_report_ats': [stamp.isoformat() for stamp in meter_reports],
+                              'cache_received_ns': int(receipt * 1e9) if receipt is not None else None,
+                              'validated_ns': validated, 'validated_sample_count': self.control_sample_count,
+                              'interval_since_previous_ms': interval_ms}
+                    timing['calculation_start_ns'] = time.monotonic_ns()
                 self.water_temperature_c = water_c
                 self.comfort = plan_comfort(self.options, now, water_c, self.profile)
                 self.comfort["temperature_source"] = self.temperature_source
@@ -500,6 +538,7 @@ class Diagnostic:
                                             'COMFORT_BACKUP' if backup_ok else decision.state,
                                             'Automatic demand calculated from valid measurements')
                 self._last_meter_report = meter_report
+                self._last_meter_reports = meter_reports
                 self.comfort["gate_state"] = decision.state
                 self.comfort["applied_boiler_w"] = round(decision.command_w)
                 self.latest = {
@@ -545,17 +584,42 @@ class Diagnostic:
                     "control_state": "FAULT",
                 }
             try:
+                observation_i2c = None
+                if timing is not None:
+                    timing['setpoint_ready_ns'] = time.monotonic_ns()
                 auto_healthy = self.latest['control_state'] in ('AUTO_READY', 'COMFORT_BACKUP', 'THERMAL_LIMIT')
                 if self.output.snapshot()['mode'] == 'AUTO_REEL':
                     hb = self.heartbeat.snapshot()
                     auto_healthy = auto_healthy and hb['state'] == 'NORMAL' and hb['driver'] == 'GPIO_REEL'
-                self.output.observe_auto(decision.command_w if self.latest['control_state'] != 'FAULT' else 0, generation,
-                    auto_healthy, new_sample=new_sample, now=now)
-            except (OSError, ValueError):
+                if isinstance(self.client, AsyncControlInputs) and grid_generation is not None:
+                    # Publishing a newer cache entry and committing a command
+                    # are serialized. A superseded calculation fails closed.
+                    with self.client.lock:
+                        if grid_generation != self.client.grid_generation:
+                            self.regulator.invalid_data('Grid observation superseded')
+                            self.latest['control_state'] = 'FAULT'
+                            self.latest['status'] = 'FAULT'
+                            self.latest['error'] = 'Grid observation superseded'
+                            self.comfort['gate_state'] = 'FAULT'
+                            auto_healthy = False
+                        observation_i2c = self.output.observe_auto(
+                            decision.command_w if self.latest['control_state'] != 'FAULT' else 0,
+                            generation, auto_healthy, new_sample=new_sample, now=now)
+                else:
+                    observation_i2c = self.output.observe_auto(
+                        decision.command_w if self.latest['control_state'] != 'FAULT' else 0,
+                        generation, auto_healthy, new_sample=new_sample, now=now)
+            except (OSError, ValueError) as exc:
+                observation_i2c = getattr(exc, 'i2c_timing', None)
                 LOG.error('Défaut de commande AUTO du DAC ; état physique inconnu')
                 self.latest['control_state'] = 'FAULT'
                 self.comfort['gate_state'] = 'FAULT'
             output = self.output.snapshot()
+            if timing is not None:
+                timing['i2c'] = observation_i2c
+                timing['outcome'] = ('ERROR' if self.latest['control_state'] == 'FAULT' else
+                                     'WRITE' if timing['i2c'] else 'NO_WRITE')
+                self.control_timing = timing
             if output['mode'] == 'AUTO_REEL' and output['auto_suspended'] and self.latest['control_state'] != 'FAULT':
                 self.latest['control_state'] = 'INHIBITED'
                 self.comfort['gate_state'] = 'INHIBITED'
@@ -570,10 +634,26 @@ class Diagnostic:
             # blocked poll cannot refresh this timestamp.
             self.heartbeat.progress('main')
             result = self.snapshot()
-        # Persistent recording is outside the regulator lock and never
-        # participates in electrical decisions or causes a faulty command.
+        if self.history_store is not None and self.record_queue is not None:
+            try:
+                self.record_queue.put_nowait((now, result))
+            except Full:
+                self.record_dropped += 1
+                # Storage overload must never block the output controller.
+        elif self.history_store is not None:
+            self._record_telemetry(now, result)
+        return result
+
+    def _record_telemetry(self, now, result):
         if self.history_store is not None:
             try:
+                if result['status'] in ('OK', 'POWER_UNKNOWN'):
+                    thermal = result.get('boiler_temperature_diagnostic', {})
+                    LOG.info('gPlugK meter=%s W | status %s | requested boiler %s W; boiler=%s C source=%s thermal_age=%s s',
+                             result['meter_w'], result['status'], result['requested_boiler_w'],
+                             result.get('water_temperature_c'), result.get('temperature_source'), thermal.get('age_s'))
+                else:
+                    LOG.warning('Mesure ou régulation indisponible : %s', result['error'])
                 self.history_store.record(now, result)
                 comfort_label = (result["comfort"].get("status"),
                                  result["comfort"].get("deadline"))
@@ -595,7 +675,38 @@ class Diagnostic:
                     self._last_heartbeat = now
             except (OSError, ValueError, sqlite3.Error) as error:
                 LOG.error("Noncritical telemetry storage failure: %s", error)
-        return result
+
+    def start_record_worker(self, capacity=128):
+        if self.history_store is None or self.record_worker is not None:
+            return
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError('Telemetry queue capacity must be positive')
+        self.record_queue = Queue(maxsize=capacity)
+        def run():
+            reported_dropped = 0
+            while not self.record_stop.is_set() or not self.record_queue.empty():
+                try:
+                    now, result = self.record_queue.get(timeout=.2)
+                except Empty:
+                    continue
+                try:
+                    if self.record_dropped != reported_dropped:
+                        LOG.error('Telemetry queue full: %d records lost', self.record_dropped)
+                        reported_dropped = self.record_dropped
+                    self._record_telemetry(now, result)
+                except Exception:
+                    LOG.exception('Telemetry worker failed to record an observation')
+                finally:
+                    self.record_queue.task_done()
+        self.record_worker = Thread(target=run, name='telemetry-store', daemon=True)
+        self.record_worker.start()
+
+    def stop_record_worker(self, timeout=5):
+        if self.record_worker is None:
+            return True
+        self.record_stop.set()
+        self.record_worker.join(timeout)
+        return not self.record_worker.is_alive()
 
     def refresh_control_temperature_once(self, now=None):
         injected = now is not None
@@ -946,7 +1057,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.16",
+            "version": "1.0.0-alpha.17",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -960,6 +1071,8 @@ class Diagnostic:
             "options": dict(self.options),
             **self.latest,
             "history": list(self.history),
+            "telemetry_queue_dropped": self.record_dropped,
+            "control_timing": self.control_timing,
             "sensors": dict(self.sensor_diagnostics),
             "weather": dict(self.weather),
             "profile": dict(self.profile),
@@ -967,16 +1080,16 @@ class Diagnostic:
 
     def loop(self, stop: Event) -> None:
         while not stop.is_set():
+            wake = getattr(self.client, 'grid_wake', None)
+            if wake is not None:
+                wake.clear()
             record = self.poll_once()
-            if record["status"] in ("OK", "POWER_UNKNOWN"):
-                thermal = record.get('boiler_temperature_diagnostic', {})
-                LOG.info("gPlugK meter=%s W | status %s | requested boiler %s W; boiler=%s C source=%s thermal_age=%s s",
-                         str(record["meter_w"]), record["status"], record["requested_boiler_w"],
-                         record.get('water_temperature_c'),
-                         record.get('temperature_source'), thermal.get('age_s'))
+            if wake is None:
+                stop.wait(self.options["sample_seconds"])
             else:
-                LOG.warning("Mesure ou régulation indisponible : %s", record["error"])
-            stop.wait(self.options["sample_seconds"])
+                # Periodic fallback retains freshness and watchdog checks;
+                # changed HA cache entries trigger the next cycle sooner.
+                wake.wait(self.options["sample_seconds"])
 
 
 def handler_factory(diag: Diagnostic):
@@ -1298,6 +1411,7 @@ def main():
     diag = Diagnostic(options, client, history_store=store, calibration_store=calibration,
                       user_settings_path=os.environ.get("SPV_USER_SETTINGS_FILE",
                                                       "/data/surplus_pv_user_settings.json"))
+    diag.start_record_worker()
     stop = Event()
     diag.begin_auto_start()
     def thermal_loop():
@@ -1354,8 +1468,10 @@ def main():
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
         pv_worker.join(timeout=15)
-        if store is not None:
+        if store is not None and not worker.is_alive() and diag.stop_record_worker():
             store.close()
+        elif store is not None:
+            LOG.error('Control or telemetry worker still blocked at shutdown; database left open')
 
 
 if __name__ == "__main__":

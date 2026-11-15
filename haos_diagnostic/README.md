@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.16
+# Surplus PV — Home Assistant OS 1.0.0-alpha.17
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.15
+## Mise à jour depuis alpha.16
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.16, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.17, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 ## Configuration réelle
@@ -22,6 +22,13 @@ mesurés `[W, mA]` strictement croissants dans `power_curve_points`, couvrant
 la plage de puissance configurée, puis confirmer par `power_curve_confirmed`.
 Sans courbe validée, AUTO réel reste indisponible. Un accusé I²C ne mesure ni le
 courant ni la puissance, et zéro demandé ne prouve pas une coupure physique.
+
+Le diagnostic `api/status` expose `control_timing` : dates des rapports HA,
+nombre d'observations validées, intervalle entre les deux dernières, et temps
+monotones internes de réception, calcul et écriture. Ces temps internes ne sont
+pas des dates civiles ; comparer leurs différences. `telemetry_queue_dropped`
+compte les enregistrements perdus en cas de file d'historique saturée. Ces
+indications ne mesurent pas la puissance physique ni la cadence du compteur.
 
 Pour démarrer le watchdog avec le service, définir `heartbeat_autostart: true`,
 `heartbeat_period_s`, `heartbeat_width_s` et `heartbeat_task_timeout_s`. La période
@@ -47,14 +54,13 @@ indépendantes restent nécessaires.
 Si des préférences ont été enregistrées dans l'ancienne interface, elles restent
 actives au premier démarrage. Les recopier dans les options HA, activer
 `use_addon_settings`, puis redémarrer. Les préférences d'origine sont conservées.
-Avant la mise à jour, relever l'ancien plafond ; le recopier après mise à jour
-dans `boiler_max_temp_c`. Si le plafond ne peut pas être récupéré, la commande
-réelle est inhibée jusqu'à sa configuration explicite.
+Vérifier après mise à jour le plafond `boiler_max_temp_c` et les autres options.
+Sans plafond configuré, la commande réelle reste inhibée.
 
 ## Retour arrière
 
 Sauvegarder d'abord les données et journaux récents. Dans Paramètres → Système →
-Sauvegardes, restaurer la sauvegarde alpha.15 de la même application. Cette
+Sauvegardes, restaurer la sauvegarde alpha.16 de la même application. Cette
 restauration remplace les données par leur état sauvegardé : préserver séparément
 les acquisitions postérieures. Ne pas supprimer /data ni désinstaller l'add-on.
 

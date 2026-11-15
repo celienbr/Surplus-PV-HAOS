@@ -1,6 +1,11 @@
 # Historique des versions de l'application Surplus PV
 
-## 1.0.0-alpha.16 — candidat en validation
+## 1.0.0-alpha.17 — candidat en validation
+
+- Réveil de la régulation sur les observations HA, historique asynchrone borné et instrumentation des cycles.
+- Bouton ARRÊT rouge visible hors diagnostic. Mesures réelles sur site en attente.
+
+## 1.0.0-alpha.16 — publiée
 
 - Options uniquement dans Home Assistant ; commandes Boiler et battement de cœur regroupés dans Sorties.
 - Pilote GP8600 réel ; mesures manquantes restent inconnues et interverrouillages conservés.

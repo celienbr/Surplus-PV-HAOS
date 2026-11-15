@@ -37,3 +37,5 @@ html.embedded .head,html.embedded .bottom{display:none}
 html.embedded .app{padding:0;max-width:none}
 .heartbeat-light { display: inline-block; width: .7rem; height: .7rem; margin-left: .4rem; border-radius: 50%; background: #777; }
 .heartbeat-light.pulse { background: #2ca34a; box-shadow: 0 0 .5rem #2ca34a; }
+#output-stop { background: #b42318; color: #fff; border: 2px solid #8f1c13; font-weight: 800; min-width: 120px; }
+#output-stop:hover { background: #8f1c13; border-color: #6f140e; }
