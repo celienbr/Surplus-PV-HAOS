@@ -5,28 +5,11 @@ tasks they represent. A stalled caller emits no further edges; hardware must
 also handle a stuck active level and power loss.
 """
 from time import monotonic
-from threading import RLock
+from threading import Condition, RLock
+from datetime import datetime, timezone
+from collections import deque
 
 from .gp8600 import number
-
-
-class SimulatedGPIO:
-    def __init__(self):
-        self.level = False
-        self.opened = False
-
-    def open(self):
-        self.opened = True
-        self.level = False
-
-    def set_active(self, active):
-        if not self.opened:
-            raise OSError('GPIO not open')
-        self.level = active
-
-    def close(self):
-        self.level = False
-        self.opened = False
 
 
 class Heartbeat:
@@ -43,6 +26,8 @@ class Heartbeat:
         self.state = 'ARRET'
         self.reason = None
         self.last_pulse = None
+        self.last_pulse_at = None
+        self.pulse_count = 0
         self.armed_at = None
         self.next_pulse = self.pulse_end = None
         self.active = False
@@ -88,6 +73,8 @@ class Heartbeat:
                 self.output.set_active(True)
                 self.active = True
                 self.last_pulse = now
+                self.last_pulse_at = datetime.now(timezone.utc).isoformat()
+                self.pulse_count += 1
                 self.pulse_end = now + self.width
                 self.next_pulse = now + self.period
             self.state = 'NORMAL'
@@ -122,6 +109,9 @@ class HeartbeatService:
     """
     def __init__(self):
         self.lock = RLock()
+        self.pulse_changed = Condition(self.lock)
+        self.pulse_sequence = 0
+        self.pulse_events = deque(maxlen=256)
         self.heartbeat = None
         self.pending_fault = None
         self.pending_stop = False
@@ -168,12 +158,32 @@ class HeartbeatService:
                         except OSError:
                             pass  # stop() recorded the uncertain GPIO state
                 else:
+                    previous_count = self.heartbeat.pulse_count
                     self.heartbeat.tick()
+                    if self.heartbeat.pulse_count != previous_count:
+                        self.pulse_sequence += 1
+                        self.pulse_events.append({'sequence': self.pulse_sequence,
+                                                  'at': self.heartbeat.last_pulse_at})
+                        self.pulse_changed.notify_all()
+
+    def wait_for_pulses(self, after, timeout=1):
+        """Return generated pulses after a cursor; never fabricate old events."""
+        with self.pulse_changed:
+            self.pulse_changed.wait_for(lambda: self.pulse_sequence > after, timeout=timeout)
+            events = [event.copy() for event in self.pulse_events if event['sequence'] > after]
+            missed = bool(events and events[0]['sequence'] > after + 1)
+            return events, missed
+
+    def pulse_cursor(self):
+        with self.lock:
+            return self.pulse_sequence
 
     def stop(self):
         with self.lock:
             if self.heartbeat is not None:
                 self.heartbeat.stop()
+                self.pending_fault = None
+                self.pending_stop = False
 
     def stop_for_mode_change(self):
         # Neither a held lock nor a blocking GPIO close may delay MANUEL.
@@ -185,15 +195,27 @@ class HeartbeatService:
             hb = self.heartbeat
             if hb is None:
                 return {'state': 'ARRET', 'active': False, 'reason': None,
-                        'last_pulse_monotonic': None, 'driver': None}
-            return {'state': hb.state, 'active': hb.active, 'reason': hb.reason,
+                        'last_pulse_monotonic': None, 'last_pulse_at': None,
+                        'last_pulse_age_s': None, 'pulse_count': 0, 'driver': None}
+            age = None if hb.last_pulse is None else hb.clock() - hb.last_pulse
+            overdue = (hb.state == 'NORMAL' and
+                       (age is None or age < 0 or age > hb.period + max(1, hb.width * 2)))
+            # Report a missed pulse immediately; the scheduler performs the
+            # potentially blocking GPIO close on its next tick.
+            if overdue and self.pending_fault is None:
+                self.pending_fault = 'Impulsion logicielle périmée'
+            state = 'DEFAUT' if overdue or self.pending_fault is not None else hb.state
+            reason = self.pending_fault if state == 'DEFAUT' and self.pending_fault else hb.reason
+            return {'state': state, 'active': hb.active and state == 'NORMAL', 'reason': reason,
                     'last_pulse_monotonic': hb.last_pulse, 'period_s': hb.period,
+                    'last_pulse_at': hb.last_pulse_at, 'last_pulse_age_s': age,
+                    'pulse_count': hb.pulse_count,
                     'task_timeout_s': hb.timeout,
                     'task_progress_monotonic': dict(hb.tasks),
                     'task_age_s': {name: (None if stamp is None else max(0, hb.clock() - stamp))
                                    for name, stamp in hb.tasks.items()},
                     'width_s': hb.width,
-                    'driver': 'SIMULATION' if isinstance(hb.output, SimulatedGPIO) else 'GPIO_REEL',
+                    'driver': getattr(hb.output, 'driver_kind', 'GPIO_REEL'),
                     'gpio': getattr(hb.output, 'offset', None)}
 
     def run(self, stop):

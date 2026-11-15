@@ -2,7 +2,6 @@
 "use strict";
 let currentData=null;
 let expanded=false;
-let settingsDirty=false,settingsBusy=false;
 const $=id=>document.getElementById(id);
 const text=(id,value)=>{const el=$(id);if(el)el.textContent=value};
 const isnum=n=>typeof n==="number"&&Number.isFinite(n);
@@ -16,28 +15,13 @@ function tag(id,state,label){
 function render(p){
  currentData=p;
  const o=p.options||{},w=p.weather||{},s=p.sensors||{},prof=p.profile||{};
- const output=p.output_control||{},mode=output.mode||'';
- const manual=['MANUEL','MANUEL_REEL','MANUEL_BANC'].includes(mode);
- const automatic=['AUTO_REEL','AUTO_BANC'].includes(mode);
- const modeText=manual?'MANUEL':automatic?'AUTO':'ARRÊT';
+ const output=p.output_control||{};
  const measuredAt=Date.parse(output.temperature_at||'');
  const age=(Date.now()-measuredAt)/1000;
  const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
   Number.isFinite(age)&&age>=-2&&age<=(o.boiler_temperature_max_age_seconds??60);
- const target=manual?output.target_c:(w.status==='ADAPTIVE'?w.target_c:o.demo_max_c);
- text('summary-mode',modeText);
- text('summary-water',measured?celsius(output.temperature_c):'Inconnue');
- text('summary-target',celsius(target));
- text('summary-heat',output.heat_requested?'Chauffe demandée':'Aucune chauffe demandée');
- text('summary-power',automatic?watts(output.auto_virtual_power_w):'Non disponible');
- text('summary-watchdog',p.heartbeat?.state||'Inconnu');
- text('summary-alert',output.auto_suspended||output.startup_pending?(output.reason||'AUTO inhibé'):p.status==='FAULT'?(p.error||'Mesures indisponibles'):'');
  text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
- text('input-target',celsius(target));
- text('input-mode',modeText);
- text('input-demand',output.heat_requested?'Chauffe demandée':'Aucune chauffe demandée');
- text('input-power',automatic?watts(output.auto_virtual_power_w):'Non disponible en W');
- text('boiler-headline',(measured?celsius(output.temperature_c):'Température inconnue')+' · '+modeText);
+ text('boiler-headline',measured?celsius(output.temperature_c):'Température inconnue');
  const today=typeof w.gross_today_remaining_kwh==="number"?w.gross_today_remaining_kwh:prof.daily_today_remaining_kwh;
  const tomorrow=typeof w.gross_tomorrow_kwh==="number"?w.gross_tomorrow_kwh:prof.daily_tomorrow_kwh;
  const tomorrowTemp=typeof w.pac_outdoor_tomorrow_c==="number"?w.pac_outdoor_tomorrow_c:prof.tomorrow_temperature_c;
@@ -78,14 +62,17 @@ function render(p){
  text("meteo-method",method);
  text("meteo-message",[prof.current_temperature_error,prof.meteo_error,w.pac_error].filter(Boolean).join(" · ")||"Température actuelle et prévision récupérées indépendamment.");
  text("setting-min",celsius(o.weather_min_c));
- text("setting-max",celsius(o.demo_max_c));
- text("settings-headline","Min "+celsius(o.weather_min_c)+" · Max "+celsius(o.demo_max_c));
- text("settings-summary","Réserve "+watts(o.target_export_w)+" + "+watts(o.weather_reserve_w)+" · maison demain "+kwh(o.house_tomorrow_kwh)+" · batterie "+kwh(o.battery_tomorrow_kwh));
- text("setting-house",kwh(o.house_today_kwh)+" / "+kwh(o.house_tomorrow_kwh));text("setting-extra",watts(o.weather_reserve_w));
+ text("setting-max",o.boiler_ceiling_configured?celsius(o.boiler_max_temp_c):"Non configuré");
+ text("settings-headline","Min "+celsius(o.weather_min_c)+" · Max "+(o.boiler_ceiling_configured?celsius(o.boiler_max_temp_c):"inconnu"));
+ text("settings-summary","Réserve "+watts(o.target_export_w)+" + "+watts(o.weather_reserve_w));
+ $("card-settings").hidden = !o.legacy_settings_active;
+ text("setting-extra",watts(o.weather_reserve_w));
  text("setting-time",(o.comfort_time||"—")+" · Europe/Zurich");
- syncUserForm(o,w);
+ text("setting-weather",o.weather_enabled?"Activée":"Désactivée");
+ text("setting-pac",o.pac_enabled?"Activé":"Désactivé");
+ text("setting-backup",o.grid_backup_enabled?"Autorisé":"Interdit");
+ text("settings-migration",o.legacy_settings_active?"Réglages hérités actifs : recopiez-les dans les options HA, puis activez use_addon_settings et redémarrez.":"");
  text("setting-reserve",watts(o.target_export_w));
- text("setting-battery",kwh(o.battery_tomorrow_kwh));
  if(w.pac_model_status==="ESTIMATED")tag("pac-tag","warn","Estimation active");
  else if(!o.pac_enabled)tag("pac-tag","","Désactivée");
  else tag("pac-tag","bad","Estimation indisponible");
@@ -107,22 +94,21 @@ function render(p){
 function renderCalculation(p){
  const o=p.options||{},w=p.weather||{},prof=p.profile||{};
  text('calc-pv',kwh(w.gross_tomorrow_kwh??prof.daily_tomorrow_kwh));
- text('calc-house',kwh(o.house_tomorrow_kwh));text('calc-pac',kwh(w.pac_electric_tomorrow_kwh));
- text('calc-battery',kwh(o.battery_tomorrow_kwh));
+ text('calc-pac',kwh(w.pac_electric_tomorrow_kwh));
  text('calc-surplus',isnum(w.pac_electric_tomorrow_kwh)?kwh(w.usable_tomorrow_assumed_kwh):'Inconnu');
- text('calc-note','Bilan de demain, borné à zéro par le moteur. La réserve instantanée en W est traitée séparément. '+(!isnum(w.pac_electric_tomorrow_kwh)?'Estimation PAC absente : aucun surplus journalier affirmé.':''));
+ text('calc-note','Consommations maison et batterie inconnues : aucun surplus futur n’est déduit de la production PV brute. '+(!isnum(w.pac_electric_tomorrow_kwh)?'Estimation PAC absente.':''));
  const adaptive=w.status==='ADAPTIVE';
- text('calc-target',celsius(adaptive?w.target_c:o.demo_max_c));
+ text('calc-target',celsius(adaptive?w.target_c:o.boiler_max_temp_c));
  text('calc-target-state',adaptive?'Consigne calculée maintenant':'Plafond manuel · adaptation inactive');
  const output=p.output_control||{};
- const requested=output.mode==='AUTO_REEL'?(output.enabled?output.auto_virtual_power_w:0):output.mode==='AUTO'?0:null;
+ const requested=output.mode==='AUTO_REEL'?(output.enabled?output.auto_requested_power_w:0):output.mode==='AUTO'?0:null;
  text('calc-heat',watts(requested));text('calc-heat-state',output.mode==='AUTO'?'Arrêt':output.mode==='MANUEL_REEL'?'Commande manuelle':'État : '+(output.reason||'—'));
  text('calc-protection',!isnum(p.meter_w)?'Mesure inexploitable':o.grid_backup_enabled?'Appoint confort autorisé':'Surplus uniquement');
  text('calc-reserve','Réserve appliquée : '+watts(o.target_export_w+(o.weather_enabled?o.weather_reserve_w:0)));
  text('calc-decision',w.decision||'Stratégie non évaluée');
  text('fallback-pv',w.pv_status==='UNAVAILABLE'?'Repli actif · prévision journalière absente':(prof.daily_pv_status==='OK'||w.pv_status==='OK')?'Totaux journaliers disponibles':'État non confirmé');
  text('fallback-weather',prof.meteo_status==='UNAVAILABLE'?'Météo horaire indisponible':w.pac_model_status==='UNAVAILABLE'?'Prévision PAC indisponible':!o.pac_enabled?'PAC désactivée · exclue du modèle':prof.meteo_status==='PARTIAL'?'Prévisions horaires partielles':prof.meteo_status==='OK'?'Prévisions horaires disponibles':'État non confirmé');
- text('fallback-grid',!isnum(p.meter_w)?'Repli actif · mesure inexploitable':p.meter_w>=-(adaptive?w.reserve_for_other_uses_w:o.target_export_w)?'Surplus insuffisant · '+(p.simulation_state||'—'):'Injection disponible · '+(p.simulation_state||'—'));
+ text('fallback-grid',!isnum(p.meter_w)?'Repli actif · mesure inexploitable':p.meter_w>=-(adaptive?w.reserve_for_other_uses_w:o.target_export_w)?'Surplus insuffisant · '+(p.control_state||'—'):'Injection disponible · '+(p.control_state||'—'));
  renderComfort(p.comfort,o);
  window.SurplusChart?.setStatus(p);
 }
@@ -142,50 +128,6 @@ function renderComfort(plan,options={}){
  text('comfort-feasibility',c.theoretical_possible===true?'Capacité suffisante selon le modèle ; confort réel non garanti.':c.theoretical_possible===false?'Minimum non garanti : délai, puissance ou autorisation insuffisants.':'Faisabilité non évaluée.');
  text('comfort-forecast','Prévisions : '+(c.forecast_status||'non évaluées')+' · appoint réseau '+(options.grid_backup_enabled===true?'autorisé uniquement jusqu’au minimum':'interdit')+'.');
 }
-function syncUserForm(o,w){
- if(settingsDirty||settingsBusy)return;
- const fields={"user-max":o.demo_max_c,"user-min":o.weather_min_c,
-               "user-time":o.comfort_time||"06:00"};
- for(const [id,value] of Object.entries(fields)){
-   if($(id))$(id).value=value??"";
- }
- $("user-weather").checked=o.weather_enabled===true;
- $("user-pac").checked=o.pac_enabled===true;
- $("user-backup").checked=o.grid_backup_enabled===true;
-}
-for(const id of ["user-max","user-min","user-time","user-weather","user-pac","user-backup"]){
- $(id).addEventListener("input",()=>{settingsDirty=true;text("user-save-status","Modifications non enregistrées.");});
-}
-$("user-settings-form").addEventListener("submit",async event=>{
- event.preventDefault();if(settingsBusy)return;
- const settings={
-   demo_max_c:Number($("user-max").value),
-   weather_min_c:Number($("user-min").value),
-   comfort_time:$("user-time").value,
-   weather_enabled:$("user-weather").checked,
-   pac_enabled:$("user-pac").checked,
-   grid_backup_enabled:$("user-backup").checked
- };
- if(!Number.isFinite(settings.demo_max_c)||!Number.isFinite(settings.weather_min_c)||
-    settings.weather_min_c>settings.demo_max_c){
-   text("user-save-status","Erreur : température minimale supérieure au maximum, ou valeur invalide.");return;
- }
- const token=currentData?.weather_toggle_token;
- if(!token){text("user-save-status","Session non initialisée.");return;}
- settingsBusy=true;$("user-save").disabled=true;
- try{
-   const response=await fetch("./api/user-settings",{
-     method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify({settings,token}),cache:"no-store",
-     signal:AbortSignal.timeout(12000)
-   });
-   if(!response.ok)throw Error("HTTP "+response.status);
-   settingsDirty=false;
-   text("user-save-status","Paramètres enregistrés localement. Les prévisions se recalculent.");
-   await update();
- }catch(error){text("user-save-status","Enregistrement impossible : "+String(error));}
- finally{settingsBusy=false;$("user-save").disabled=false;}
-});
 let updating=false;
 async function update(){
  if(updating)return;updating=true;
@@ -196,7 +138,7 @@ async function update(){
  tag('grid-tag','bad','Données périmées');text('calc-protection','État inconnu');
  text('fallback-grid','Communication interface perdue · état non confirmé');
  tag('comfort-status','bad','Plan périmé');text('comfort-reason','Communication perdue : le plan affiché ne confirme pas l’état actuel.');
- for(const id of ['input-water','input-target','input-mode','input-demand','input-power'])text(id,'Inconnu · connexion perdue');
+ for(const id of ['input-water'])text(id,'Inconnu · connexion perdue');
  text('boiler-headline','État inconnu · connexion perdue');
  }finally{updating=false;}
 }

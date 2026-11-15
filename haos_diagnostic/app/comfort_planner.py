@@ -1,13 +1,12 @@
 """Deterministic R5 comfort planning. No I/O, no actuator or HA write access.
 
-The requested backup power is a *total simulated boiler demand*, not measured
+The requested backup power is a *total boiler demand*, not measured
 grid import. The caller must gate every use with fresh valid measurements and
 the regulator's thermal protection. Forecasts never postpone the prudent start
 derived from the temperature actually supplied to this function.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import datetime, time, timedelta, timezone
 from math import isfinite
 from zoneinfo import ZoneInfo
@@ -54,21 +53,17 @@ def _settings(options):
         hour = time(int(text[:2]), int(text[3:]))
     except ValueError:
         raise ValueError("Comfort time must be HH:MM") from None
-    maximum = _number(options.get("demo_max_c", 70), "maximum", 30, 80)
+    maximum = _number(options.get("boiler_max_temp_c", 70), "maximum", 30, 80)
     result = {
         "enabled": enabled, "weather": weather, "hour": hour,
         "maximum": maximum,
         "minimum": _number(options.get("weather_min_c", 50), "minimum", 30, maximum),
         "volume": _number(options.get("weather_volume_l", 300), "volume", 1, 2000),
         "power": _number(options.get("max_power_w", 6000), "power", 100, 6000),
-        "efficiency": _number(options.get("comfort_efficiency", .95), "efficiency", .5, 1),
-        "loss": _number(options.get("comfort_loss_w", 100), "heat loss", 0, 1000),
         "margin": _number(options.get("comfort_margin_minutes", 20), "margin", 0, 120),
         "grace": _number(options.get("comfort_grace_minutes", 60), "grace", 0, 120),
         "step": _number(options.get("sample_seconds", 10), "sample interval", 1, 3600),
     }
-    if result["loss"] >= result["power"] * result["efficiency"]:
-        raise ValueError("Thermal losses must be below effective heater power")
     return result
 
 
@@ -154,7 +149,8 @@ def _forecast_energy(profile, now, deadline, maximum, enabled):
 def plan_comfort(options, now, water_temp_c, profile=None):
     """Return a serializable, side-effect-free decision for the next daily need.
 
-    Losses and efficiency are explicit uncalibrated assumptions. The safety
+    The model assumes all electrical energy heats the water and neglects
+    standing losses and draws. These assumptions are not calibrated. The safety
     margin advances the start but is not additional energy to be put into water.
     Grid demand stops at Tmin, independently of the optional surplus ceiling.
     A missed deadline is recovered for a bounded grace period, then the next
@@ -166,10 +162,7 @@ def plan_comfort(options, now, water_temp_c, profile=None):
     deadline, missed = _deadline(instant, settings, temperature)
     remaining_h = max(0.0, (deadline-instant).total_seconds()/3600)
     sensible = max(0.0, settings["minimum"]-temperature) * settings["volume"] * WH_PER_LITRE_K / 1000
-    # Existing heat above Tmin is useful storage against future losses.
-    thermal_gap = max(0.0, (settings["minimum"]-temperature) * settings["volume"] * WH_PER_LITRE_K / 1000
-                      + settings["loss"] * remaining_h / 1000)
-    electrical_need = thermal_gap / settings["efficiency"]
+    electrical_need = sensible
     duration_h = electrical_need * 1000 / settings["power"]
     latest = deadline - timedelta(hours=duration_h, minutes=settings["margin"])
     physical_possible = electrical_need <= settings["power"] * remaining_h / 1000 + 1e-9
@@ -182,11 +175,10 @@ def plan_comfort(options, now, water_temp_c, profile=None):
     request = 0.0
     # Limit the last sample's energy to exactly the measured sensible gap.
     if settings["enabled"] and due and temperature < settings["maximum"]:
-        request = min(settings["power"], sensible * 3600000 /
-                      (settings["step"] * settings["efficiency"]))
+        request = min(settings["power"], sensible * 3600000 / settings["step"])
 
     if temperature >= settings["maximum"]:
-        status, reason = "THERMAL_LIMIT", "Plafond utilisateur atteint : appoint simulé nul."
+        status, reason = "THERMAL_LIMIT", "Plafond utilisateur atteint : appoint nul."
     elif sensible == 0:
         status, reason = "MINIMUM_REACHED", "Minimum actuel atteint : aucun appoint réseau."
     elif missed:
@@ -197,7 +189,7 @@ def plan_comfort(options, now, water_temp_c, profile=None):
         reason = "Puissance ou temps insuffisant : minimum non garanti à l’heure prévue."
     elif due:
         status = "BACKUP_DUE" if settings["enabled"] else "BACKUP_DISABLED"
-        reason = "Dernier départ prudent atteint ; appoint simulé limité au minimum." if settings["enabled"] else "Dernier départ prudent atteint mais appoint réseau interdit."
+        reason = "Dernier départ prudent atteint ; appoint limité au minimum." if settings["enabled"] else "Dernier départ prudent atteint mais appoint réseau interdit."
     else:
         status, reason = "WAITING_SURPLUS", "Priorité au surplus mesuré jusqu’au dernier départ prudent."
     if not settings["enabled"] and solar_possible is False and sensible > 0:
@@ -215,7 +207,7 @@ def plan_comfort(options, now, water_temp_c, profile=None):
         "backup_energy_kwh": None if backup_energy is None else round(backup_energy, 6),
         "fallback_backup_energy_kwh": round(electrical_need, 6) if solar is None else None,
         "backup_power_w": round(request, 6),
-        "backup_power_basis": "TOTAL_SIMULATED_HEATER_DEMAND_NOT_GRID_MEASUREMENT",
+        "backup_power_basis": "TOTAL_HEATER_DEMAND_NOT_GRID_MEASUREMENT",
         "forecast_status": forecast_status,
         "forecast_credit_for_latest_start_kwh": 0.0,
         "theoretical_possible": possible,
@@ -226,75 +218,8 @@ def plan_comfort(options, now, water_temp_c, profile=None):
         "grid_backup_enabled": settings["enabled"],
         "minimum_c": settings["minimum"],
         "maximum_c": settings["maximum"],
-        "model": {"volume_l": settings["volume"], "efficiency": settings["efficiency"],
-                  "loss_w": settings["loss"], "margin_minutes": settings["margin"],
+        "model": {"volume_l": settings["volume"], "margin_minutes": settings["margin"],
+                  "standing_losses_modelled": False,
                   "grace_minutes": settings["grace"], "draws_modelled": False,
                   "calibrated": False},
     }
-
-
-def project_comfort_profile(options, now, water_temp_c, profile, *, ceiling_c=None):
-    """Overlay an estimated 48 h trajectory, never silently filling PV gaps.
-
-    Five-minute energy integration uses the same planner and no hot-water draw
-    model. Missing intervals end the temperature trajectory; unknown values stay
-    null instead of turning into invented zero production. Output is a copy.
-    """
-    instant = _utc(now)
-    settings = _settings(options)
-    temperature = _number(water_temp_c, "water temperature", -20, 110)
-    ceiling = settings["maximum"] if ceiling_c is None else _number(
-        ceiling_c, "projection ceiling", settings["minimum"], settings["maximum"])
-    result = deepcopy(profile)
-    result["comfort_projection"] = {
-        "model": "ESTIMATE_NO_DRAWS", "physical_output": False,
-        "reason": "Simulation thermique sans puisages ni stratification ; valeurs inconnues laissées vides.",
-    }
-    capacity = settings["volume"] * WH_PER_LITRE_K
-    cursor = instant
-    valid = True
-    for point in result.get("points", []):
-        point.update(planned_boiler_w=None, projected_water_c=None,
-                     planned_grid_backup_w=None, target_c=ceiling)
-        try:
-            start = _utc(point.get("at"))
-            end = _utc(point["period_end"]) if point.get("period_end") else start+timedelta(hours=1)
-            if end <= instant:
-                continue
-            start = max(start, instant)
-            if start != cursor or end <= start:
-                valid = False
-            solar = _number(point.get("heater_budget_w"), "projection surplus", 0, 50000)
-        except (TypeError, ValueError, KeyError):
-            valid = False
-        if not valid:
-            continue
-        watts_seconds = 0.0
-        grid_seconds = 0.0
-        while cursor < end:
-            step_end = min(end, cursor+timedelta(minutes=5))
-            seconds = (step_end-cursor).total_seconds()
-            # Forecast freshness is not artificially renewed in this forward
-            # model. Only actual thermal deficit determines the prudent start.
-            step_options = {**options, "sample_seconds": seconds}
-            plan = plan_comfort(step_options, cursor, temperature, None)
-            available_solar = min(settings["power"], solar)
-            optional = min(available_solar, max(0, (ceiling-temperature)*capacity)
-                           *3600/(seconds*settings["efficiency"]))
-            total = max(optional, plan["backup_power_w"])
-            total = min(total, max(0, (settings["maximum"]-temperature)*capacity)
-                        *3600/(seconds*settings["efficiency"]))
-            grid = max(0.0, total-available_solar)
-            # Only the comfort part may import. This also catches integration
-            # mistakes without requiring a hardware driver or network service.
-            if not settings["enabled"]:
-                grid = 0.0
-            temperature = max(0.0, temperature + (total*settings["efficiency"]-settings["loss"]) * seconds/(3600*capacity))
-            watts_seconds += total*seconds
-            grid_seconds += grid*seconds
-            cursor = step_end
-        elapsed = (end-start).total_seconds()
-        point.update(planned_boiler_w=round(watts_seconds/elapsed, 2),
-                     planned_grid_backup_w=round(grid_seconds/elapsed, 2),
-                     projected_water_c=round(temperature, 3))
-    return result

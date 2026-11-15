@@ -35,3 +35,5 @@ body:has(#page-monitor){max-width:1000px;padding-bottom:35px}.value,.big,.status
 #boiler-frame{display:block;width:100%;min-height:300px;border:0;overflow:hidden}
 html.embedded .head,html.embedded .bottom{display:none}
 html.embedded .app{padding:0;max-width:none}
+.heartbeat-light { display: inline-block; width: .7rem; height: .7rem; margin-left: .4rem; border-radius: 50%; background: #777; }
+.heartbeat-light.pulse { background: #2ca34a; box-shadow: 0 0 .5rem #2ca34a; }

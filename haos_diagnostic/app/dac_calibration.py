@@ -1,12 +1,10 @@
 """User multimeter records; never infer physical measurement from I2C ACK."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import sqlite3
 from threading import Lock
 
-from .gp8600 import number
 
 
 class CalibrationStore:
@@ -17,28 +15,6 @@ class CalibrationStore:
         self.db.execute("""CREATE TABLE IF NOT EXISTS dac_measurements_v1 (
             id INTEGER PRIMARY KEY, at TEXT NOT NULL, payload TEXT NOT NULL)""")
         self.db.commit()
-
-    def record(self, state, data):
-        if set(data) != {"voltage_v", "resistance_ohm"}:
-            raise ValueError("Enter measured voltage and actual load resistance")
-        if state["mode"] != "BANC_DAC" or not state["enabled"] or not state["dac"]["ready"]:
-            raise ValueError("An enabled, communicating DAC bench is required")
-        resistance = number(data["resistance_ohm"], 247.5, 252.5)
-        voltage = number(data["voltage_v"], 0, 6)
-        measured = voltage / resistance * 1000
-        point = {"requested_ma": state["requested_ma"],
-                 "acknowledged_ma": state["dac"]["last_acknowledged_ma"],
-                 "code": state["dac"]["code"], "voltage_v": voltage,
-                 "resistance_ohm": resistance, "measured_ma": measured,
-                 "error_ma": measured - state["requested_ma"],
-                 "driver": state["dac"]["driver"],
-                 "address": state["dac"].get("address"),
-                 "provenance": "USER_MULTIMETER", "revision": state["revision"]}
-        with self.lock:
-            self.db.execute("INSERT INTO dac_measurements_v1(at,payload) VALUES (?,?)",
-                            (datetime.now(timezone.utc).isoformat(), json.dumps(point, allow_nan=False)))
-            self.db.commit()
-        return point
 
     def snapshot(self, driver, address=None):
         with self.lock:

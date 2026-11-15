@@ -1,4 +1,4 @@
-"""Forty-eight UTC hours of labelled LOCAL solar / PAC forecast (simulation).
+"""Forty-eight UTC hours of labelled LOCAL solar / PAC forecast.
 
 Do not generate false solar curves from daily kWh totals. HA Forecast.Solar
 hourly service is available only with its config-entry ID. A missing ID or
@@ -72,14 +72,6 @@ def hourly_solar_energy(readings: dict, hours: list[datetime]) -> tuple[list[dic
     return normalized, "wh_period" if use_energy else "watts_hourly_average"
 
 
-def _local_day_bounds(day, zone):
-    following = day + timedelta(days=1)
-    start = datetime(day.year, day.month, day.day, tzinfo=zone).astimezone(timezone.utc)
-    end = datetime(following.year, following.month, following.day,
-                   tzinfo=zone).astimezone(timezone.utc)
-    return start, end
-
-
 def read_current_temperature_c(client, source: str) -> float:
     """Read the current HA weather attribute, independently of forecasts."""
     if client is None:
@@ -115,9 +107,7 @@ def make_hourly_profile(options: dict, now: datetime, client) -> dict:
         "forecast_freshness_basis": "HA cached response; remote generation time not supplied",
         "solar_energy_source": None,
         "load_assumptions": {
-            "house_today_kwh": "remaining from retrieval to local midnight; excludes PAC and boiler",
-            "battery_today_kwh": "remaining reservation, not an installed battery measurement",
-            "tomorrow_budgets": "spread over actual local day; reused for horizon beyond tomorrow",
+            "house_and_battery": "unknown; gross PV is not assumed to be available surplus",
             "pac_w": "24-hour-equivalent model rate integrated over actual elapsed hours",
         },
         "timezone": options["pac_timezone"],
@@ -227,25 +217,8 @@ def make_hourly_profile(options: dict, now: datetime, client) -> dict:
     except (OSError, ValueError, KeyError, TypeError, TimeoutError, AttributeError) as err:
         result["meteo_error"] = "Open-Meteo [" + source + "] : " + str(err)[:185]
 
-    max_power = options["max_power_w"]
-    reserve = options["target_export_w"] + (
-        options["weather_reserve_w"] if options["weather_enabled"] else 0)
-    today_date = now.astimezone(zone).date()
     for p in result["points"]:
         t = p["temperature_c"]
-        pv = p["pv_w"]
-        # Today's inputs are REMAINING energy, not full-day totals. Future
-        # budgets are daily estimates; use the real 23/24/25-hour local day.
-        day = _instant(p["at"]).astimezone(zone).date()
-        day_start, day_end = _local_day_bounds(day, zone)
-        today = day == today_date
-        suffix = "today_kwh" if today else "tomorrow_kwh"
-        daily_house = options["house_" + suffix]
-        daily_battery = options["battery_" + suffix]
-        seconds = (day_end - (now if today else day_start)).total_seconds()
-        home_w = (daily_house + daily_battery) * 3_600_000 / seconds
-        p["house_w"] = home_w
-        p["load_budget_scope"] = "remaining_today" if today else "daily_assumption"
         if not options["pac_enabled"]:
             # Explicit opt-out: exclude PAC from this planning model. This is
             # an assumption selected by the user, never a measured zero load.
@@ -259,12 +232,8 @@ def make_hourly_profile(options: dict, now: datetime, client) -> dict:
                 reference_cop=options["pac_reference_cop"],
                 cop_change_per_c=options["pac_cop_change_per_c"])
             p["pac_w"] = estimate.energy_kwh * 1000 / 24
-        # A requested PAC model with missing weather blocks surplus; an
-        # explicit opt-out excludes that model, documented as an assumption.
-        if pv is not None and p["pac_w"] is not None:
-            usable = max(0, pv - home_w - p["pac_w"] - reserve)
-            p["surplus_w"] = usable
-            p["heater_budget_w"] = min(max_power, usable)
+        # House and battery consumption are unknown. Leave both usable surplus
+        # and heater budget unavailable instead of treating unknown loads as zero.
     # Energy forecast from now to next local midnight, with a prorated first
     # hour and 23/25-hour Swiss days. Never present missing data as zero.
     if options["pac_enabled"]:

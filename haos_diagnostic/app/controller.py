@@ -98,4 +98,4 @@ class SurplusRegulator:
         desired_w = max(0.0, min(p.max_power_w, self.command_w + correction_w))
         delta_w = max(-p.max_step_w, min(p.max_step_w, desired_w - self.command_w))
         self.command_w = max(0.0, min(p.max_power_w, self.command_w + delta_w))
-        return Decision(self.command_w, "AUTO_READY_SIMULATION", "Valid data; logical command only")
+        return Decision(self.command_w, "AUTO_READY", "Valid data; logical command only")

@@ -44,42 +44,14 @@ class LinuxI2C:
             self.fd = None
 
 
-class SimulatedDAC:
-    kind = "simulated"
+class GP8600:
+    kind = "gp8600"
 
-    def __init__(self):
+    def __init__(self, bus=1, address=0x58, transport_factory=LinuxI2C):
         self.ready = False
         self.last_ma = None
         self.last_code = None
         self.error = None
-
-    def initialize(self):
-        self.ready = True
-        self.error = None
-        self.set_current(0)
-
-    def set_current(self, current_ma):
-        code = current_code(current_ma)
-        if not self.ready:
-            raise OSError("DAC requires initialization/recovery at zero")
-        self.last_ma, self.last_code = float(current_ma), code
-
-    def close(self):
-        self.ready = False
-
-    def snapshot(self):
-        status = "SIMULATED" if self.ready else ("FAULT" if self.error else "INACTIVE")
-        return {"driver": self.kind, "communication": status,
-                "ready": self.ready, "last_acknowledged_ma": self.last_ma,
-                "code": self.last_code, "error": self.error,
-                "physical_current_ma": None, "physical_current_measured": False}
-
-
-class GP8600(SimulatedDAC):
-    kind = "gp8600"
-
-    def __init__(self, bus=1, address=0x58, transport_factory=LinuxI2C):
-        super().__init__()
         # HAOS grants only i2c-1; do not accept arbitrary paths or buses.
         if type(bus) is not int or bus != 1:
             raise ValueError("Only Raspberry Pi bus i2c-1 is supported")
@@ -132,14 +104,13 @@ class GP8600(SimulatedDAC):
         self.ready = False
 
     def snapshot(self):
-        return {**super().snapshot(), "communication": "ACK" if self.ready else ("FAULT" if self.error else "INACTIVE"),
+        return {"driver": self.kind,
+                "communication": "ACK" if self.ready else ("FAULT" if self.error else "INACTIVE"),
+                "ready": self.ready, "last_acknowledged_ma": self.last_ma,
+                "code": self.last_code, "error": self.error,
+                "physical_current_ma": None, "physical_current_measured": False,
                 "bus": self.bus, "address": self.address}
 
 
 def make_dac(options):
-    driver = options.get("dac_driver", "simulated")
-    if driver == "simulated":
-        return SimulatedDAC()
-    if driver == "gp8600":
-        return GP8600(1, options.get("dac_i2c_address", 0x58))
-    raise ValueError("Unknown DAC driver")
+    return GP8600(1, options.get("dac_i2c_address", 0x58))

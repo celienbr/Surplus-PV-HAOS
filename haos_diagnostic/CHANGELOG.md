@@ -1,5 +1,13 @@
 # Historique des versions de l'application Surplus PV
 
+## 1.0.0-alpha.16 — candidat en validation
+
+- Options uniquement dans Home Assistant ; commandes Boiler et battement de cœur regroupés dans Sorties.
+- Pilote GP8600 réel ; mesures manquantes restent inconnues et interverrouillages conservés.
+- Migration du plafond : relever la valeur Alpha.15, puis la saisir dans `boiler_max_temp_c` ; sans plafond connu, chauffe inhibée.
+- Historique préservé : anciennes valeurs virtuelles identifiées, nouvelles demandes non mesurées enregistrées séparément.
+- Prévisions maison et batterie indisponibles ; le confort conserve un départ prudent sans crédit solaire fictif.
+
 ## 1.0.0-alpha.15 — candidat
 
 AUTO demandé au démarrage sous conditions de sécurité, protection sonde > 83 °C et interface simplifiée.

@@ -1,6 +1,6 @@
 name: "Surplus PV"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.15"
+version: "1.0.0-alpha.16"
 description: "Gestion du surplus photovoltaïque et du chauffe-eau"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -19,13 +19,10 @@ devices:
   - /dev/i2c-1
   - /dev/gpiochip0
 options:
-  dac_driver: simulated
-  dac_connection: bench
   dac_i2c_address: 88
   power_curve_points: ""
   power_curve_confirmed: false
   heartbeat_task_timeout_s: 30
-  heartbeat_omron_setting_s: 0
   heartbeat_autostart: false
   heartbeat_period_s: 0
   heartbeat_width_s: 0
@@ -36,18 +33,13 @@ options:
   boiler_temperature_max_age_seconds: 60
   boiler_temperature_refresh_enabled: false
   boiler_temperature_refresh_seconds: 15
-  demo_water_c: 45
-  demo_max_c: 70
   target_export_w: 100
   max_power_w: 6000
   weather_enabled: false
   comfort_time: "06:00"
   grid_backup_enabled: false
+  use_addon_settings: false
   boiler_temperature_entity: ""
-  air_probe_entity: ""
-  air_probe_address: ""
-  comfort_efficiency: 0.95
-  comfort_loss_w: 100
   comfort_margin_minutes: 20
   comfort_grace_minutes: 60
   forecast_today_entity: sensor.energy_production_today_remaining
@@ -63,10 +55,6 @@ options:
   weather_buffer_c: 5
   weather_volume_l: 300
   weather_heat_demand_kwh: 5
-  house_today_kwh: 2
-  house_tomorrow_kwh: 5
-  battery_today_kwh: 0
-  battery_tomorrow_kwh: 0
   weather_reserve_w: 0
   pac_enabled: false
   pac_temperature_source: open_meteo
@@ -79,13 +67,10 @@ options:
   pac_reference_cop: 3.5
   pac_cop_change_per_c: 0.1
 schema:
-  dac_driver: "list(simulated|gp8600)"
-  dac_connection: "list(bench|boiler)"
   dac_i2c_address: "int(88,95)"
   power_curve_points: str
   power_curve_confirmed: bool
   heartbeat_task_timeout_s: "int(1,300)"
-  heartbeat_omron_setting_s: "int(0,3600)"
   heartbeat_autostart: bool
   heartbeat_period_s: "float(0,3600)"
   heartbeat_width_s: "float(0,3600)"
@@ -96,18 +81,14 @@ schema:
   boiler_temperature_max_age_seconds: "int(10,300)"
   boiler_temperature_refresh_enabled: bool
   boiler_temperature_refresh_seconds: "int(10,120)"
-  demo_water_c: "float(0,90)"
-  demo_max_c: "float(40,80)"
+  boiler_max_temp_c: "float(40,80)?"
   target_export_w: "int(0,2000)"
   max_power_w: "int(100,6000)"
   weather_enabled: bool
   comfort_time: str
   grid_backup_enabled: bool
+  use_addon_settings: bool
   boiler_temperature_entity: str
-  air_probe_entity: str
-  air_probe_address: str
-  comfort_efficiency: "float(0.5,1)"
-  comfort_loss_w: "float(0,1000)"
   comfort_margin_minutes: "float(0,120)"
   comfort_grace_minutes: "float(0,120)"
   forecast_today_entity: str
@@ -123,10 +104,6 @@ schema:
   weather_buffer_c: "int(0,20)"
   weather_volume_l: "int(1,2000)"
   weather_heat_demand_kwh: "float(0,30)"
-  house_today_kwh: "float(0,50)"
-  house_tomorrow_kwh: "float(0,50)"
-  battery_today_kwh: "float(0,50)"
-  battery_tomorrow_kwh: "float(0,50)"
   weather_reserve_w: "int(0,3000)"
   pac_enabled: bool
   pac_temperature_source: "list(open_meteo|sensor)"
