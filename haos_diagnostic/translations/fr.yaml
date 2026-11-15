@@ -1,0 +1,4 @@
+configuration:
+  predictive_target_enabled:
+    name: Consigne prédictive Forecast.Solar
+    description: Adapte le plafond de stockage selon les prévisions disponibles. Le surplus mesuré reste nécessaire pour la chauffe au-dessus du minimum de confort.

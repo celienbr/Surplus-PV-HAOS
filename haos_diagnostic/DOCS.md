@@ -1,18 +1,25 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.17
+# Surplus PV — Home Assistant OS 1.0.0-alpha.18
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.16
+## Mise à jour depuis alpha.17
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.17, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.18, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
+
+La consigne prédictive Forecast.Solar est désactivée par défaut après mise à
+jour. Pour l'activer, renseigner `predictive_target_enabled: true` et la
+configuration Forecast.Solar horaire dans les options de l'add-on, puis
+redémarrer. En cas de prévisions absentes, incomplètes ou périmées, les règles
+Alpha.17 s'appliquent. Le PV prévu est brut ; seul le compteur réel permet la
+chauffe de stockage, et l'appoint réseau reste limité au minimum de confort.
 
 ## Configuration réelle
 
@@ -60,7 +67,7 @@ Sans plafond configuré, la commande réelle reste inhibée.
 ## Retour arrière
 
 Sauvegarder d'abord les données et journaux récents. Dans Paramètres → Système →
-Sauvegardes, restaurer la sauvegarde alpha.16 de la même application. Cette
+Sauvegardes, restaurer la sauvegarde alpha.17 de la même application. Cette
 restauration remplace les données par leur état sauvegardé : préserver séparément
 les acquisitions postérieures. Ne pas supprimer /data ni désinstaller l'add-on.
 

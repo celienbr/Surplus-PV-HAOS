@@ -21,6 +21,7 @@ from .ha_client import HomeAssistantClient
 from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
 from .forecast_adapter import build_weather_preview
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
+from .predictive_target import predictive_target
 from .history_store import HistoryStore, parse_time
 from .energy_dashboard import EnergyDashboard, live_grid
 from .pv_actual import PVAcquisition
@@ -61,6 +62,7 @@ def parse_options(source: dict) -> dict:
         "target_export_w": float(source.get("target_export_w", 100)),
         "max_power_w": float(source.get("max_power_w", 6000)),
         "weather_enabled": source.get("weather_enabled", False),
+        "predictive_target_enabled": source.get("predictive_target_enabled", False),
         "comfort_time": source.get("comfort_time", "06:00"),
         "grid_backup_enabled": source.get("grid_backup_enabled", False),
         "use_addon_settings": source.get("use_addon_settings", False),
@@ -129,6 +131,8 @@ def parse_options(source: dict) -> dict:
         raise ValueError("pac_enabled must be a boolean")
     if not isinstance(options["weather_enabled"], bool):
         raise ValueError("weather_enabled must be a boolean")
+    if not isinstance(options["predictive_target_enabled"], bool):
+        raise ValueError("predictive_target_enabled must be a boolean")
     if not isinstance(options["grid_backup_enabled"], bool):
         raise ValueError("grid_backup_enabled must be a boolean")
     if type(options['use_addon_settings']) is not bool or type(options['legacy_settings_active']) is not bool:
@@ -337,6 +341,8 @@ class Diagnostic:
             "solar_status": "WAITING", "meteo_status": "WAITING",
             "pac_status": "WAITING"
         }
+        self.predictive = {"status": "WAITING", "target_c": None, "fallback": True,
+                           "reason": "En attente de prévisions et de température valides."}
         self.sensor_diagnostics = {"pi": None, "po": None}
         self.latest = {
             "status": "STARTING",
@@ -516,6 +522,14 @@ class Diagnostic:
                             stamp = datetime.fromisoformat(forecast_at)
                             if -300 <= (now-stamp).total_seconds() <= 10800:
                                 limit = self.weather['target_c']
+                    if self.options['predictive_target_enabled'] and self.predictive.get('status') == 'OK':
+                        try:
+                            calculated = datetime.fromisoformat(self.predictive['calculated_at'])
+                            source_at = datetime.fromisoformat(self.predictive['source_updated_at'])
+                            if all(-300 <= (now - t).total_seconds() <= 10800 for t in (calculated, source_at)):
+                                limit = self.predictive['target_c']
+                        except (KeyError, ValueError, TypeError):
+                            pass  # explicit Alpha.17 fallback
                     decision = self.regulator.step(meter_w, water_c, temp_limit_c=limit,
                                                    target_export_w=reserve)
                     if decision.state == 'AUTO_READY':
@@ -995,6 +1009,8 @@ class Diagnostic:
         now = now or datetime.now(timezone.utc)
         with self.lock:
             options = dict(self.options)
+            temperature = self.water_temperature_c
+            previous = dict(self.predictive)
         self.refresh_weather_once(now)
         try:
             profile = make_hourly_profile(options, now, self.client)
@@ -1004,6 +1020,14 @@ class Diagnostic:
                 "solar_error": "Erreur profil : " + str(error)[:180],
                 "meteo_error": None,
             }
+        try:
+            predictive = predictive_target(profile, temperature, options['weather_min_c'],
+                options['boiler_max_temp_c'], options['weather_volume_l'], now,
+                options['predictive_target_enabled'], previous)
+            predictive['source_updated_at'] = profile.get('daily_pv_updated_at')
+        except (ValueError, TypeError):
+            predictive = {'status': 'UNAVAILABLE', 'target_c': None, 'fallback': True,
+                          'reason': 'Température du boiler indisponible ou invalide : repli Alpha.17.'}
         with self.lock:
             if options != self.options:
                 return self.profile  # discard an in-flight response for old settings
@@ -1011,6 +1035,7 @@ class Diagnostic:
             if options != self.options:
                 return self.profile
             self.profile = profile
+            self.predictive = predictive
         if self.history_store is not None:
             try:
                 # Archive at most one as-issued forecast per hour.
@@ -1045,8 +1070,8 @@ class Diagnostic:
             now = datetime.now(timezone.utc)
             if next_forecast is None or now >= next_forecast:
                 result = self.refresh_profile_once(now)
-                next_forecast = now + timedelta(
-                    seconds=1800 if result["status"] == "OK" else 300)
+                next_forecast = now + timedelta(seconds=1800 if result["status"] == "OK"
+                    and (not self.options['predictive_target_enabled'] or self.predictive.get('status') == 'OK') else 300)
             else:
                 self.refresh_current_weather_once()
             self.profile_wake.wait(120)
@@ -1057,13 +1082,14 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.17",
+            "version": "1.0.0-alpha.18",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
             "boiler_temperature_diagnostic": dict(self.boiler_temperature_diagnostic),
             "comfort": dict(self.comfort),
+            "predictive": dict(self.predictive),
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
             "physical_outputs": "GP8600_COMMANDE_NON_VERIFIEE",
             "output_control": self.output_status(),
