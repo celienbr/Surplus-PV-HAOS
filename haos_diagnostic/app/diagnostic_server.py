@@ -1,8 +1,4 @@
-"""HAOS monitoring and explicit GP8600 bench/manual session control.
-
-AUTO retains the alpha.3 virtual regulator. HA APIs remain read-only; all DAC
-writes pass through OutputControl. Simulation is the default, without hardware.
-"""
+"""HAOS measurements, comfort planning and guarded GP8600 control."""
 from __future__ import annotations
 
 from collections import deque
@@ -18,14 +14,13 @@ import sqlite3
 import time
 
 from .controller import Parameters, SurplusRegulator, Decision
-from .user_settings import USER_FIELDS, read_settings, save_settings
-from .comfort_planner import plan_comfort, project_comfort_profile
+from .user_settings import read_settings
+from .comfort_planner import plan_comfort
 from .ha_client import HomeAssistantClient
 from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
 from .forecast_adapter import build_weather_preview
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .history_store import HistoryStore, parse_time
-from .air_probe import AirProbe
 from .energy_dashboard import EnergyDashboard, live_grid
 from .pv_actual import PVAcquisition
 from .gp8600 import make_dac, number
@@ -33,7 +28,7 @@ from .output_control import OutputControl
 from .dac_calibration import CalibrationStore
 from .measurements import Measurement
 from .boiler_temperature import valid_boiler_temperature
-from .heartbeat import HeartbeatService, SimulatedGPIO
+from .heartbeat import HeartbeatService
 from .power_curve import PowerCurve
 from .gpio_v2 import GPIOOutput
 from .async_ha import AsyncControlInputs
@@ -42,7 +37,6 @@ LOG = logging.getLogger("surplus_pv_diagnostic")
 MOBILE_INPUTS = Path(__file__).resolve().parent.parent / "web" / "inputs.html"
 PROFILE_VIEW = Path(__file__).resolve().parent.parent / "web" / "profile.html"
 BOILER_VIEW = Path(__file__).resolve().parent.parent / "web" / "boiler.html"
-CONFIG_VIEW = Path(__file__).resolve().parent.parent / "web" / "configuration.html"
 THEME_CSS = Path(__file__).resolve().parent.parent / "web" / "theme.css"
 THEME_JS = Path(__file__).resolve().parent.parent / "web" / "theme.js"
 HISTORY_JS = Path(__file__).resolve().parent.parent / "web" / "history.js"
@@ -62,18 +56,15 @@ def parse_options(source: dict) -> dict:
         "boiler_temperature_max_age_seconds": int(source.get("boiler_temperature_max_age_seconds", 60)),
         "boiler_temperature_refresh_enabled": source.get("boiler_temperature_refresh_enabled", False),
         "boiler_temperature_refresh_seconds": int(source.get("boiler_temperature_refresh_seconds", 15)),
-        "demo_water_c": float(source.get("demo_water_c", 45)),
-        "demo_max_c": float(source.get("demo_max_c", 70)),
+        "boiler_max_temp_c": float(source.get("boiler_max_temp_c") if source.get("boiler_max_temp_c") is not None else source.get("demo_max_c", 70)),
         "target_export_w": float(source.get("target_export_w", 100)),
         "max_power_w": float(source.get("max_power_w", 6000)),
         "weather_enabled": source.get("weather_enabled", False),
         "comfort_time": source.get("comfort_time", "06:00"),
         "grid_backup_enabled": source.get("grid_backup_enabled", False),
+        "use_addon_settings": source.get("use_addon_settings", False),
+        "legacy_settings_active": source.get("legacy_settings_active", False),
         "boiler_temperature_entity": source.get("boiler_temperature_entity", ""),
-        "air_probe_entity": source.get("air_probe_entity", ""),
-        "air_probe_address": source.get("air_probe_address", ""),
-        "comfort_efficiency": float(source.get("comfort_efficiency", 0.95)),
-        "comfort_loss_w": float(source.get("comfort_loss_w", 100)),
         "comfort_margin_minutes": float(source.get("comfort_margin_minutes", 20)),
         "comfort_grace_minutes": float(source.get("comfort_grace_minutes", 60)),
         "forecast_today_entity": source.get("forecast_today_entity", "sensor.energy_production_today_remaining"),
@@ -83,10 +74,6 @@ def parse_options(source: dict) -> dict:
         "weather_buffer_c": float(source.get("weather_buffer_c", 5)),
         "weather_volume_l": float(source.get("weather_volume_l", 300)),
         "weather_heat_demand_kwh": float(source.get("weather_heat_demand_kwh", 5)),
-        "house_today_kwh": float(source.get("house_today_kwh", 2)),
-        "house_tomorrow_kwh": float(source.get("house_tomorrow_kwh", 5)),
-        "battery_today_kwh": float(source.get("battery_today_kwh", 0)),
-        "battery_tomorrow_kwh": float(source.get("battery_tomorrow_kwh", 0)),
         "weather_reserve_w": float(source.get("weather_reserve_w", 0)),
         "pac_enabled": source.get("pac_enabled", False),
         "pac_temperature_source": source.get("pac_temperature_source", "open_meteo"),
@@ -100,6 +87,11 @@ def parse_options(source: dict) -> dict:
         "pac_reference_cop": float(source.get("pac_reference_cop", 3.5)),
         "pac_cop_change_per_c": float(source.get("pac_cop_change_per_c", 0.1)),
     }
+    # The Supervisor may have stripped the old option during an upgrade. A
+    # numeric fallback is used only for display/calculation until the original
+    # or a new ceiling is known; real output remains inhibited in that case.
+    options['boiler_ceiling_configured'] = (source.get('boiler_max_temp_c') is not None
+                                             or source.get('demo_max_c') is not None)
     # Automatic compatibility for this installation's obsolete HA options:
     # previous packages saved weather.home; the user confirmed weather.maison.
     options["weather_entity_migrated"] = options["pac_weather_entity"] == "weather.home"
@@ -120,10 +112,8 @@ def parse_options(source: dict) -> dict:
         raise ValueError("Boiler active refresh must be a boolean")
     if not 10 <= options["boiler_temperature_refresh_seconds"] <= 120:
         raise ValueError("Invalid boiler active refresh period")
-    if not 0 <= options["demo_water_c"] <= 90:
-        raise ValueError("Invalid demonstration temperature")
-    if not 40 <= options["demo_max_c"] <= 80:
-        raise ValueError("Invalid demonstration maximum")
+    if not 40 <= options["boiler_max_temp_c"] <= 80:
+        raise ValueError("Invalid boiler maximum")
     if not 0 <= options["target_export_w"] <= 2000:
         raise ValueError("Invalid target export")
     if not 100 <= options["max_power_w"] <= 6000:
@@ -132,30 +122,20 @@ def parse_options(source: dict) -> dict:
     Parameters(
         max_power_w=options["max_power_w"],
         target_export_w=options["target_export_w"],
-        temp_limit_c=options["demo_max_c"],
+        temp_limit_c=options["boiler_max_temp_c"],
     )
-    if options["demo_water_c"] < 0:
-        raise ValueError("Invalid demonstration temperature")
     if not isinstance(options["pac_enabled"], bool):
         raise ValueError("pac_enabled must be a boolean")
     if not isinstance(options["weather_enabled"], bool):
         raise ValueError("weather_enabled must be a boolean")
     if not isinstance(options["grid_backup_enabled"], bool):
         raise ValueError("grid_backup_enabled must be a boolean")
+    if type(options['use_addon_settings']) is not bool or type(options['legacy_settings_active']) is not bool:
+        raise ValueError('Invalid settings migration choice')
     entity = options["boiler_temperature_entity"]
     if not isinstance(entity, str) or (entity and (not entity.startswith("sensor.")
             or not all(c.isalnum() or c in "._" for c in entity))):
         raise ValueError("Invalid boiler temperature sensor ID")
-    probe = options['air_probe_entity']
-    address = options['air_probe_address']
-    if not isinstance(probe, str) or (probe and (not probe.startswith('sensor.') or
-            not all(c.isalnum() or c in '._' for c in probe))):
-        raise ValueError('Invalid air probe entity')
-    if not isinstance(address, str) or (address and (len(address) != 12 or
-            any(c not in '0123456789abcdefABCDEF' for c in address))):
-        raise ValueError('Invalid DS18B20 address')
-    if bool(probe) != bool(address) or (probe and probe == entity):
-        raise ValueError('Air probe needs an address and a distinct boiler entity')
     comfort = options["comfort_time"]
     if not isinstance(comfort, str) or len(comfort) != 5 or comfort[2] != ":" or not (
             comfort[:2].isdigit() and comfort[3:].isdigit() and
@@ -180,20 +160,14 @@ def parse_options(source: dict) -> dict:
         ZoneInfo(options["pac_timezone"])
     except (ZoneInfoNotFoundError, ValueError, KeyError) as error:
         raise ValueError("PAC timezone not supported") from error
-    if not 30 <= options["weather_min_c"] <= options["demo_max_c"]:
+    if not 30 <= options["weather_min_c"] <= options["boiler_max_temp_c"]:
         raise ValueError("Minimum must not exceed maximum")
     limits = {
-        "comfort_efficiency": (0.5, 1),
-        "comfort_loss_w": (0, 1000),
         "comfort_margin_minutes": (0, 120),
         "comfort_grace_minutes": (0, 120),
         "weather_buffer_c": (0, 20),
         "weather_volume_l": (1, 2000),
         "weather_heat_demand_kwh": (0, 30),
-        "house_today_kwh": (0, 50),
-        "house_tomorrow_kwh": (0, 50),
-        "battery_today_kwh": (0, 50),
-        "battery_tomorrow_kwh": (0, 50),
         "weather_reserve_w": (0, 3000),
         "pac_reference_electric_kwh": (0, 70),
         "pac_reference_temp_c": (-15, 15),
@@ -210,8 +184,6 @@ def parse_options(source: dict) -> dict:
         raise ValueError("PAC reference temperature must be below heating balance")
     if options["weather_reserve_w"] + options["target_export_w"] > 6000:
         raise ValueError("Total export reserve too large")
-    if options["comfort_loss_w"] >= options["max_power_w"] * options["comfort_efficiency"]:
-        raise ValueError("Thermal losses must be below effective boiler power")
     for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity', 'pv_actual_energy_total_entity'):
         entity = source.get(key, '')
         if not isinstance(entity, str) or (entity and (
@@ -228,13 +200,7 @@ def parse_options(source: dict) -> dict:
         raise ValueError('Invalid PV sample period')
     if not isinstance(options['pv_self_consumption_topology_verified'],bool):
         raise ValueError('PV topology confirmation must be boolean')
-    options['dac_driver'] = source.get('dac_driver', 'simulated')
-    options['dac_connection'] = source.get('dac_connection', 'bench')
     options['dac_i2c_address'] = source.get('dac_i2c_address', 88)
-    if options['dac_driver'] not in ('simulated', 'gp8600'):
-        raise ValueError('Unknown DAC driver')
-    if options['dac_connection'] not in ('bench', 'boiler'):
-        raise ValueError('Unknown DAC wiring destination')
     if type(options['dac_i2c_address']) is not int or not 88 <= options['dac_i2c_address'] <= 95:
         raise ValueError('GP8600 I2C address must be 88..95')
     options['power_curve_points'] = source.get('power_curve_points', '')
@@ -242,7 +208,6 @@ def parse_options(source: dict) -> dict:
     if not isinstance(options['power_curve_points'], str) or type(options['power_curve_confirmed']) is not bool:
         raise ValueError('Invalid power curve settings')
     options['heartbeat_task_timeout_s'] = int(source.get('heartbeat_task_timeout_s', 30))
-    options['heartbeat_omron_setting_s'] = int(source.get('heartbeat_omron_setting_s', 0))
     options['heartbeat_autostart'] = source.get('heartbeat_autostart', False)
     options['heartbeat_period_s'] = source.get('heartbeat_period_s', 0)
     options['heartbeat_width_s'] = source.get('heartbeat_width_s', 0)
@@ -250,7 +215,7 @@ def parse_options(source: dict) -> dict:
         raise ValueError('Invalid watchdog autostart option')
     for name in ('heartbeat_period_s', 'heartbeat_width_s'):
         number(options[name], 0, 3600)
-    if not 1 <= options['heartbeat_task_timeout_s'] <= 300 or not 0 <= options['heartbeat_omron_setting_s'] <= 3600:
+    if not 1 <= options['heartbeat_task_timeout_s'] <= 300:
         raise ValueError('Invalid watchdog timing')
     return options
 
@@ -293,13 +258,8 @@ class Diagnostic:
             options, self.migrated_forecast_solar_entry_id = read_settings(
                 self.user_settings_path, options)
         self.options = parse_options(options)
-        if self.user_settings_path is not None and self.user_settings_path.exists():
-            save_settings(self.user_settings_path, self.options,
-                          self.migrated_forecast_solar_entry_id)
         self.client = client
-        self.air_probe = AirProbe(self.options['air_probe_entity'], self.options['air_probe_address'],
-                                  client, self.options['max_age_seconds'], history_store)
-        self.output = OutputControl(dac or make_dac(self.options), self.options['dac_connection'],
+        self.output = OutputControl(dac or make_dac(self.options), 'boiler',
                                     auto_timeout=self.options['max_age_seconds'], max_power=self.options['max_power_w'])
         if self.options['power_curve_confirmed']:
             try:
@@ -335,13 +295,10 @@ class Diagnostic:
         self._last_meter_report = None
         self._last_poll_at = None
         self.comfort = {"status": "WAITING", "reason": "En attente de mesures valides.",
-                        "backup_power_w": 0, "physical_outputs": False}
-        self.water_temperature_c = (None if (self.options["boiler_temperature_entity"] or
-                                    (self.output.dac.kind == 'gp8600' and self.output.connection == 'boiler'))
-                                    else self.options["demo_water_c"])
-        self.temperature_source = ("HOME_ASSISTANT" if (self.options["boiler_temperature_entity"] or
-                                   (self.output.dac.kind == 'gp8600' and self.output.connection == 'boiler'))
-                                   else "SIMULATED_NOT_CONNECTED")
+                        "backup_power_w": 0}
+        self.water_temperature_c = None
+        self.temperature_source = ("HOME_ASSISTANT" if self.options["boiler_temperature_entity"]
+                                   else "UNCONFIGURED")
         self.client = client
         self.history_store = history_store
         self.energy_dashboard = EnergyDashboard(history_store) if history_store else None
@@ -355,7 +312,7 @@ class Diagnostic:
             target_export_w=self.options["target_export_w"],
             gain=0.5,
             max_step_w=300,
-            temp_limit_c=self.options["demo_max_c"],
+            temp_limit_c=self.options["boiler_max_temp_c"],
         ))
         self.lock = Lock()
         self.history = deque(maxlen=180)
@@ -380,10 +337,9 @@ class Diagnostic:
             "measurement_coverage": "NONE",
             "updated_at": None,
             "meter_w": None,
-            "simulated_boiler_w": 0,
-            "simulated_grid_after_w": None,
+            "requested_boiler_w": 0,
             "meter_age_s": None,
-            "simulation_state": "NOT_STARTED",
+            "control_state": "NOT_STARTED",
         }
 
     def poll_once(self, now: datetime | None = None) -> dict:
@@ -464,8 +420,7 @@ class Diagnostic:
                 }
 
                 entity = self.options["boiler_temperature_entity"]
-                water_c = self.options["demo_water_c"]
-                if not entity and self.output.dac.kind == 'gp8600' and self.output.connection == 'boiler':
+                if not entity:
                     raise ValueError('Sonde réelle du boiler non configurée')
                 if entity:
                     if injected_clock:
@@ -501,57 +456,49 @@ class Diagnostic:
                 self.water_temperature_c = water_c
                 self.comfort = plan_comfort(self.options, now, water_c, self.profile)
                 self.comfort["temperature_source"] = self.temperature_source
-                self.comfort["physical_outputs"] = False
-                # Communication and power confidence are different notions.
-                if measurement_status == "POWER_UNKNOWN":
-                    decision = self.regulator.invalid_data("Net power ambiguous")
-                    simulated_after = None
-                elif measurement_coverage == "ONE_RECENT" and meter_w > 0:
-                    decision = self.regulator.invalid_data(
-                        "Incomplete import measurement: virtual heater inhibited")
-                    simulated_after = None
+                # Regulate only when real AUTO is selected. The meter already
+                # includes the current boiler load; never add an invented load.
+                automatic = self.output.snapshot()['mode'] == 'AUTO_REEL'
+                if not automatic:
+                    self.regulator.invalid_data('Output not in AUTO')
+                    decision = Decision(0, 'STOPPED' if self.output.snapshot()['mode'] == 'AUTO' else 'MANUAL',
+                                        'No automatic output requested')
+                elif measurement_status == 'POWER_UNKNOWN':
+                    decision = self.regulator.invalid_data('Net power ambiguous')
+                elif measurement_coverage == 'ONE_RECENT' and meter_w > 0:
+                    decision = self.regulator.invalid_data('Incomplete import measurement: heating inhibited')
                 else:
                     old_command = self.regulator.command_w
-                    # In physical AUTO the grid meter already includes the
-                    # actual load; in simulation it does not. Never add a
-                    # virtual load a second time to the real measurement.
-                    physical_auto = self.output.snapshot()['mode'] == 'AUTO_REEL'
-                    limit = self.options["demo_max_c"]
-                    reserve = self.options["target_export_w"]
-                    weather_fresh = False
-                    if self.weather_enabled and self.weather.get("forecast_timestamp"):
-                        stamp = datetime.fromisoformat(self.weather["forecast_timestamp"])
-                        weather_fresh = -300 <= (now-stamp).total_seconds() <= 10800
+                    limit = self.options['boiler_max_temp_c']
+                    reserve = self.options['target_export_w']
                     if self.weather_enabled:
-                        reserve += self.options["weather_reserve_w"]
-                    if self.weather_enabled and weather_fresh and self.weather["status"] == "ADAPTIVE":
-                        limit = self.weather["target_c"]
-                    decision = self.regulator.step(meter_w if physical_auto else meter_w + old_command, water_c,
-                                                   temp_limit_c=limit,
+                        reserve += self.options['weather_reserve_w']
+                        forecast_at = self.weather.get('forecast_timestamp')
+                        if forecast_at and self.weather.get('status') == 'ADAPTIVE':
+                            stamp = datetime.fromisoformat(forecast_at)
+                            if -300 <= (now-stamp).total_seconds() <= 10800:
+                                limit = self.weather['target_c']
+                    decision = self.regulator.step(meter_w, water_c, temp_limit_c=limit,
                                                    target_export_w=reserve)
-                    if decision.state == "AUTO_READY_SIMULATION":
-                        # No repeated correction on the same HA report.
+                    if decision.state == 'AUTO_READY':
                         surplus_command = decision.command_w if new_sample else old_command
-                        available = (old_command if physical_auto else 0) - meter_w - reserve
+                        available = old_command - meter_w - reserve
                         surplus_command = min(surplus_command, max(0, available))
-                        backup = self.comfort["backup_power_w"]
-                        backup_ok = (self.options["grid_backup_enabled"] and backup > 0
-                                     and water_c < self.options["weather_min_c"])
+                        backup = self.comfort['backup_power_w']
+                        backup_ok = (self.options['grid_backup_enabled'] and backup > 0
+                                     and water_c < self.options['weather_min_c'])
                         total = surplus_command
                         if backup_ok:
                             ramped = (min(backup, old_command+300) if new_sample
                                       else min(backup, old_command))
-                            # Limit interval energy to the current measured gap.
-                            gap_w = ((self.options["weather_min_c"]-water_c)
-                                     * self.options["weather_volume_l"] * 1.163
-                                     * 3600 / self.options["sample_seconds"]
-                                     / self.options["comfort_efficiency"])
+                            gap_w = ((self.options['weather_min_c']-water_c)
+                                     * self.options['weather_volume_l'] * 1.163
+                                     * 3600 / self.options['sample_seconds'])
                             total = max(total, min(ramped, gap_w))
-                        self.regulator.command_w = min(self.options["max_power_w"], total)
+                        self.regulator.command_w = min(self.options['max_power_w'], total)
                         decision = Decision(self.regulator.command_w,
-                            "COMFORT_BACKUP_SIMULATION" if backup_ok else decision.state,
-                            "Logical calculation only; no actuator")
-                    simulated_after = meter_w + decision.command_w
+                                            'COMFORT_BACKUP' if backup_ok else decision.state,
+                                            'Automatic demand calculated from valid measurements')
                 self._last_meter_report = meter_report
                 self.comfort["gate_state"] = decision.state
                 self.comfort["applied_boiler_w"] = round(decision.command_w)
@@ -563,18 +510,14 @@ class Diagnostic:
                     "measurement_coverage": measurement_coverage,
                     "updated_at": now.isoformat(),
                     "meter_w": round(meter_w) if meter_w is not None else None,
-                    "simulated_boiler_w": round(decision.command_w),
-                    "simulated_grid_after_w": (
-                        round(simulated_after) if simulated_after is not None else None
-                    ),
+                    "requested_boiler_w": 0,
                     "meter_age_s": round(age, 1) if age is not None else None,
-                    "simulation_state": decision.state,
+                    "control_state": decision.state,
                 }
                 if meter_w is not None:
                     self.history.append({
                         "time": now.strftime("%H:%M:%S"),
                         "meter_w": round(meter_w),
-                        "simulated_boiler_w": round(decision.command_w),
                     })
             except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
                 if not injected_clock:
@@ -588,7 +531,7 @@ class Diagnostic:
                 retained_w = meter_observation['meter_w'] if meter_ok else None
                 self.comfort = {"status": "FAULT", "reason": str(exc)[:260],
                                 "backup_power_w": 0, "applied_boiler_w": 0,
-                                "gate_state": "FAULT", "physical_outputs": False}
+                                "gate_state": "FAULT"}
                 self.latest = {
                     "status": "FAULT",
                     "error": str(exc)[:260],
@@ -597,21 +540,29 @@ class Diagnostic:
                     "measurement_coverage": meter_observation['coverage'] if meter_ok else "NONE",
                     "updated_at": now.isoformat(),
                     "meter_w": round(retained_w) if retained_w is not None else None,
-                    "simulated_boiler_w": 0,
-                    "simulated_grid_after_w": None,
+                    "requested_boiler_w": 0,
                     "meter_age_s": round(meter_age, 1) if meter_ok else None,
-                    "simulation_state": "FAULT",
+                    "control_state": "FAULT",
                 }
             try:
-                auto_healthy = self.latest['simulation_state'] in ('AUTO_READY_SIMULATION', 'COMFORT_BACKUP_SIMULATION', 'THERMAL_LIMIT')
+                auto_healthy = self.latest['control_state'] in ('AUTO_READY', 'COMFORT_BACKUP', 'THERMAL_LIMIT')
                 if self.output.snapshot()['mode'] == 'AUTO_REEL':
                     hb = self.heartbeat.snapshot()
                     auto_healthy = auto_healthy and hb['state'] == 'NORMAL' and hb['driver'] == 'GPIO_REEL'
-                self.output.observe_auto(self.latest['simulated_boiler_w'], generation,
-                    auto_healthy,
-                    new_sample=new_sample)
+                self.output.observe_auto(decision.command_w if self.latest['control_state'] != 'FAULT' else 0, generation,
+                    auto_healthy, new_sample=new_sample, now=now)
             except (OSError, ValueError):
                 LOG.error('Défaut de commande AUTO du DAC ; état physique inconnu')
+                self.latest['control_state'] = 'FAULT'
+                self.comfort['gate_state'] = 'FAULT'
+            output = self.output.snapshot()
+            if output['mode'] == 'AUTO_REEL' and output['auto_suspended'] and self.latest['control_state'] != 'FAULT':
+                self.latest['control_state'] = 'INHIBITED'
+                self.comfort['gate_state'] = 'INHIBITED'
+            requested = (output['auto_requested_power_w'] if output['mode'] == 'AUTO_REEL'
+                         else 0 if output['mode'] == 'AUTO' else None)
+            self.latest['requested_boiler_w'] = round(requested) if requested is not None else None
+            self.comfort['applied_boiler_w'] = self.latest['requested_boiler_w']
             # Progress is a liveness report, not an aggregate sensor-health
             # flag. An invalid AUTO calculation has already been inhibited by
             # observe_auto; MANUEL does not depend on the grid meter at all.
@@ -638,7 +589,7 @@ class Diagnostic:
                         "WARNING" if label not in ("OK","POWER_UNKNOWN") else "INFO",
                         "GRID_STATUS",
                         f"{label}: network={result.get('meter_w')} W; "
-                        f"virtual_boiler={result.get('simulated_boiler_w')} W; "
+                        f"requested_boiler={result.get('requested_boiler_w')} W; "
                         f"coverage={result.get('measurement_coverage')}")
                     self._last_logged_status = label
                     self._last_heartbeat = now
@@ -672,8 +623,6 @@ class Diagnostic:
                             self._boiler_refresh_error = str(error)[:160]
                             LOG.warning('Boiler HA update_entity request failed: %s', error)
                 measurement = self.client.read_temperature_c(entity)
-            elif self.output.dac.kind == 'simulated' or self.output.connection == 'bench':
-                measurement = Measurement(self.options['demo_water_c'], now)
             else:
                 reason = 'Boiler sensor not configured or HA unavailable'
         except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
@@ -701,7 +650,7 @@ class Diagnostic:
         self.boiler_temperature_diagnostic = {
             'entity': entity or None, 'status': status, 'reason': reason,
             'source': ('HA_TEMPLATE_LIVE_LAST_REPORTED' if entity and self.client is not None
-                       else 'SIMULATION' if measurement is not None else None),
+                       else None),
             'value_c': measurement.value if measurement is not None else None,
             'report_at': (measurement.measured_at.isoformat()
                           if measurement is not None else None),
@@ -723,7 +672,7 @@ class Diagnostic:
                 self._boiler_refresh_result, reason)
             self._last_thermal_log_status = status
         try:
-            self.output.observe_temperature(measurement, self.options['demo_max_c'],
+            self.output.observe_temperature(measurement, self.options['boiler_max_temp_c'],
                                             self.options['boiler_temperature_max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
@@ -743,6 +692,8 @@ class Diagnostic:
         if values.get('action') == 'mode' and values.get('mode') in ('AUTO_REEL', 'MANUEL_REEL'):
             if not self.options['boiler_temperature_entity']:
                 raise ValueError('Sonde réelle du boiler requise')
+            if not self.options['boiler_ceiling_configured']:
+                raise ValueError('Plafond du boiler inconnu : renseigner boiler_max_temp_c')
             if not self.heartbeat.lock.acquire(blocking=False):
                 raise ValueError('Watchdog occupé ; réessayer')
             try:
@@ -823,8 +774,11 @@ class Diagnostic:
             if not self.options['boiler_temperature_entity']:
                 self.startup_reason = 'AUTO inhibé : sonde réelle du boiler non configurée'
                 return
-            if not self.output.power_curve.validated:
+            if self.output.power_curve is None or not self.output.power_curve.validated:
                 self.startup_reason = 'AUTO inhibé : calibration puissance/courant non confirmée'
+                return
+            if not self.options['boiler_ceiling_configured']:
+                self.startup_reason = 'AUTO inhibé : plafond du boiler inconnu, renseigner boiler_max_temp_c'
                 return
             if time.monotonic() < self.startup_next_attempt:
                 return
@@ -882,16 +836,13 @@ class Diagnostic:
         width = number(command['width_s'], .001, period)
         if width >= period or width > self.options['max_age_seconds'] or self.heartbeat.snapshot()['state'] != 'ARRET':
             raise ValueError('Arrêter le heartbeat et vérifier sa temporisation')
-        if command['driver'] == 'simulated':
-            output = SimulatedGPIO()
-        elif command['driver'] == 'gpio17':
+        if command['driver'] == 'gpio17':
             timeout = self.options['heartbeat_task_timeout_s']
-            omron = self.options['heartbeat_omron_setting_s']
             # H3DK-M1 catalogue: input >= 50 ms, reset >= 100 ms.
             if width < .05 or period - width < .1:
                 raise ValueError('Impulsion GPIO >= 0,05 s et repos >= 0,1 s requis')
-            if timeout < 2 * self.options['sample_seconds'] or not omron or timeout + period >= omron:
-                raise ValueError('Configurer le réglage Omron et des délais compatibles avec la période de régulation')
+            if timeout < 2 * self.options['sample_seconds']:
+                raise ValueError('Le délai watchdog doit couvrir deux périodes de régulation')
             self.output.prepare_heartbeat()
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
@@ -899,14 +850,7 @@ class Diagnostic:
         # A heartbeat cannot outlive a stalled acquisition/regulation loop.
         self.heartbeat.start(output, ['main', 'thermal', 'guard'],
                              period=period, width=width,
-                             timeout=(self.options['heartbeat_task_timeout_s']
-                                      if command['driver'] == 'gpio17'
-                                      else self.options['max_age_seconds']))
-
-    def record_dac_measurement(self, values):
-        # Lock prevents a setpoint change between capture and persistence.
-        with self.output.lock:
-            return self.calibration.record(self.output.snapshot(), values)
+                             timeout=self.options['heartbeat_task_timeout_s'])
 
     def guard_output_once(self):
         self.output.check_freshness()
@@ -952,16 +896,6 @@ class Diagnostic:
         with self.lock:
             if options != self.options:
                 return self.profile  # discard an in-flight response for old settings
-            water_c = self.water_temperature_c
-            ceiling = (self.weather["target_c"] if self.weather_enabled
-                       and self.weather["status"] == "ADAPTIVE" else options["demo_max_c"])
-        # CPU-only forward model outside the measurement lock. Its generation
-        # timestamp remains explicit; it is a scenario, never measured heat.
-        if water_c is not None:
-            profile = project_comfort_profile(options, now, water_c, profile, ceiling_c=ceiling)
-        else:
-            profile["comfort_projection"] = {"status": "UNAVAILABLE",
-                "reason": "Température valide non disponible ; trajectoire non calculée."}
         with self.lock:
             if options != self.options:
                 return self.profile
@@ -1009,76 +943,18 @@ class Diagnostic:
                 next_forecast = None
                 self.profile_wake.clear()
 
-    def set_user_settings(self, values: dict) -> None:
-        """Save validated UI preferences only; never call HA control services."""
-        allowed = USER_FIELDS
-        if not isinstance(values, dict) or set(values) != allowed:
-            raise ValueError("Unexpected user settings fields")
-        if (isinstance(values["demo_max_c"], bool) or
-                isinstance(values["weather_min_c"], bool) or
-                not isinstance(values["demo_max_c"], (int, float)) or
-                not isinstance(values["weather_min_c"], (int, float))):
-            raise ValueError("Temperature settings must be numeric")
-        if not isinstance(values["weather_enabled"], bool) or not isinstance(values["pac_enabled"], bool):
-            raise ValueError("Strategy switches must be boolean")
-        with self.lock:
-            proposed = parse_options({**self.options, **values})
-            if self.user_settings_path is not None:
-                save_settings(self.user_settings_path, proposed,
-                              self.migrated_forecast_solar_entry_id)
-            self.options = proposed
-            self.output.observe_temperature(self.output.temperature, proposed['demo_max_c'],
-                                            proposed['boiler_temperature_max_age_seconds'])
-            self._last_meter_report = None
-            self.comfort = {"status": "WAITING", "reason": "Réglages modifiés ; nouveau calcul attendu.",
-                            "backup_power_w": 0, "applied_boiler_w": 0, "physical_outputs": False}
-            self.latest["simulated_boiler_w"] = 0
-            self.latest["simulated_grid_after_w"] = self.latest.get("meter_w")
-            self.latest["simulation_state"] = "SETTINGS_CHANGED"
-            self.profile = {"status": "WAITING", "points": []}
-            self.weather_enabled = proposed["weather_enabled"]
-            self.regulator = SurplusRegulator(Parameters(
-                max_power_w=proposed["max_power_w"],
-                target_export_w=proposed["target_export_w"],
-                gain=0.5, max_step_w=300,
-                temp_limit_c=proposed["demo_max_c"],
-            ))
-            self.next_weather_refresh = None
-            self.weather = build_weather_preview(
-                self.options, datetime.now(timezone.utc), None, self.weather_enabled)
-            self.profile_wake.set()
-
-    def set_weather_enabled(self, enabled: bool) -> None:
-        """Change adviser only, in process memory. No HA or device writes."""
-        if not isinstance(enabled, bool):
-            raise ValueError("Boolean weather toggle required")
-        with self.lock:
-            self.weather_enabled = enabled
-            self.options["weather_enabled"] = enabled
-            self.profile_wake.set()
-            self.next_weather_refresh = None
-            self.weather = build_weather_preview(
-                self.options, datetime.now(timezone.utc), None, self.weather_enabled)
-            if enabled:
-                self.weather.update({
-                    "enabled": True,
-                    "status": "UPDATING",
-                    "decision": "Lecture des prévisions Home Assistant au prochain cycle.",
-                })
-
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.15",
+            "version": "1.0.0-alpha.16",
             "weather_toggle_token": self.weather_toggle_token,
-            "read_only": self.output.dac.kind == "simulated",
+            "read_only": False,
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
             "boiler_temperature_diagnostic": dict(self.boiler_temperature_diagnostic),
-            "air_probe": self.air_probe.snapshot(),
             "comfort": dict(self.comfort),
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
-            "physical_outputs": "SIMULATED" if self.output.dac.kind == "simulated" else "GP8600_EXPLICIT_SESSION",
+            "physical_outputs": "GP8600_COMMANDE_NON_VERIFIEE",
             "output_control": self.output_status(),
             "heartbeat": self.heartbeat.snapshot(),
             "options": dict(self.options),
@@ -1094,12 +970,12 @@ class Diagnostic:
             record = self.poll_once()
             if record["status"] in ("OK", "POWER_UNKNOWN"):
                 thermal = record.get('boiler_temperature_diagnostic', {})
-                LOG.info("gPlugK meter=%s W | status %s | virtual boiler %d W | virtual grid %s; boiler=%s C source=%s thermal_age=%s s",
-                         str(record["meter_w"]), record["status"], record["simulated_boiler_w"],
-                         str(record["simulated_grid_after_w"]), record.get('water_temperature_c'),
+                LOG.info("gPlugK meter=%s W | status %s | requested boiler %s W; boiler=%s C source=%s thermal_age=%s s",
+                         str(record["meter_w"]), record["status"], record["requested_boiler_w"],
+                         record.get('water_temperature_c'),
                          record.get('temperature_source'), thermal.get('age_s'))
             else:
-                LOG.warning("Diagnostic read-only: %s", record["error"])
+                LOG.warning("Mesure ou régulation indisponible : %s", record["error"])
             stop.wait(self.options["sample_seconds"])
 
 
@@ -1107,6 +983,28 @@ def handler_factory(diag: Diagnostic):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            if path == '/api/heartbeat-events':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Accel-Buffering', 'no')
+                self.end_headers()
+                cursor = diag.heartbeat.pulse_cursor()
+                try:
+                    while True:
+                        events, missed = diag.heartbeat.wait_for_pulses(cursor, timeout=1)
+                        snapshot = diag.heartbeat.snapshot()
+                        for event in events:
+                            payload = json.dumps({'pulse': event, 'missed': missed,
+                                                  'state': snapshot['state']}, allow_nan=False)
+                            self.wfile.write(('event: pulse\ndata: ' + payload + '\n\n').encode())
+                            cursor = event['sequence']
+                        payload = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
+                        self.wfile.write(('event: state\ndata: ' + payload + '\n\n').encode())
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                return
             if path == "/api/history.csv":
                 if diag.history_store is None:
                     self.send_error(503, "Persistent history not configured")
@@ -1168,9 +1066,6 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/boiler", "/boiler.html"):
                 body = BOILER_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
-            elif path in ("/configuration", "/configuration.html"):
-                body = CONFIG_VIEW.read_bytes()
-                content_type = "text/html; charset=utf-8"
             elif path == "/api/output":
                 body = json.dumps({**diag.output_status(),
                                    "boiler_temperature_diagnostic": dict(diag.boiler_temperature_diagnostic),
@@ -1180,13 +1075,6 @@ def handler_factory(diag: Diagnostic):
             elif path == "/api/heartbeat":
                 body = json.dumps({**diag.heartbeat.snapshot(), "token": diag.weather_toggle_token},
                                   ensure_ascii=False, allow_nan=False).encode('utf-8')
-                content_type = 'application/json; charset=utf-8'
-            elif path == '/api/air-probe-history':
-                try:
-                    body = json.dumps({'points': diag.air_probe.history()}, allow_nan=False).encode('utf-8')
-                except (OSError, sqlite3.Error):
-                    self.send_error(503, 'Air probe history unavailable')
-                    return
                 content_type = 'application/json; charset=utf-8'
             elif path == "/api/dac-measurements":
                 state = diag.output.snapshot()['dac']
@@ -1199,7 +1087,7 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/power-gauge.js", "/air_probe_chart.js", "/heartbeat.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/power-gauge.js", "/heartbeat_status.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":
@@ -1307,7 +1195,7 @@ def handler_factory(diag: Diagnostic):
                     state = {key: state[key] for key in (
                         "version", "read_only", "physical_outputs", "temperature_source",
                         "water_temperature_c", "updated_at", "status", "meter_w",
-                        "simulated_boiler_w", "simulation_state", "comfort")}
+                        "requested_boiler_w", "control_state", "comfort")}
                 body = json.dumps(state, ensure_ascii=False, allow_nan=False).encode("utf-8")
                 content_type = "application/json; charset=utf-8"
             else:
@@ -1330,7 +1218,7 @@ def handler_factory(diag: Diagnostic):
         def do_POST(self):
             # Authenticated Ingress session. Only OutputControl can write the DAC.
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/weather-toggle", "/api/user-settings", "/api/output", "/api/dac-measurements", "/api/heartbeat"):
+            if path not in ("/api/output", "/api/heartbeat"):
                 self.send_error(405, "No hardware/HA write operations")
                 return
             # HA ingress can remove or rewrite Sec-Fetch-Site and Host,
@@ -1353,25 +1241,12 @@ def handler_factory(diag: Diagnostic):
                 if not secrets.compare_digest(content["token"], diag.weather_toggle_token):
                     self.send_error(403, "Invalid or expired session token")
                     return
-                if path == "/api/weather-toggle":
-                    if set(content) != {"enabled", "token"} or not isinstance(content["enabled"], bool):
-                        self.send_error(400, "Expected enabled and token fields")
-                        return
-                    diag.set_weather_enabled(content["enabled"])
-                elif path in ('/api/output', '/api/dac-measurements', '/api/heartbeat'):
-                    if set(content) != {'command', 'token'}:
-                        raise ValueError('Expected command and token fields')
-                    if path == '/api/output':
-                        diag.set_output(content['command'])
-                    elif path == '/api/heartbeat':
-                        diag.set_heartbeat(content['command'])
-                    else:
-                        diag.record_dac_measurement(content['command'])
+                if set(content) != {'command', 'token'}:
+                    raise ValueError('Expected command and token fields')
+                if path == '/api/output':
+                    diag.set_output(content['command'])
                 else:
-                    if set(content) != {"settings", "token"}:
-                        self.send_error(400, "Expected settings and token fields")
-                        return
-                    diag.set_user_settings(content["settings"])
+                    diag.set_heartbeat(content['command'])
             except (OSError, sqlite3.Error):
                 self.send_error(503, "Operation failed; inspect output state")
                 return
@@ -1456,12 +1331,6 @@ def main():
             stop.wait(diag.options['pv_actual_sample_seconds'])
     pv_worker = Thread(target=pv_loop, daemon=True)
     pv_worker.start()
-    def air_probe_loop():
-        while not stop.is_set():
-            diag.air_probe.poll()
-            stop.wait(10)
-    air_probe_worker = Thread(target=air_probe_loop, daemon=True)
-    air_probe_worker.start()
     server = ThreadingHTTPServer(("0.0.0.0", 8099), handler_factory(diag))
     try:
         server.serve_forever(poll_interval=0.5)
@@ -1485,7 +1354,6 @@ def main():
         worker.join(timeout=5)
         profile_worker.join(timeout=5)
         pv_worker.join(timeout=15)
-        air_probe_worker.join(timeout=5)
         if store is not None:
             store.close()
 

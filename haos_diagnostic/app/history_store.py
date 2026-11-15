@@ -68,6 +68,8 @@ class HistoryStore:
                 timestamp TEXT PRIMARY KEY,
                 grid_w INTEGER, simulated_heater_w INTEGER,
                 status TEXT NOT NULL, coverage TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS output_requests_v1(
+                timestamp TEXT PRIMARY KEY, requested_w INTEGER, mode TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS forecasts(
                 timestamp TEXT PRIMARY KEY, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS archived_forecasts(
@@ -89,14 +91,18 @@ class HistoryStore:
         """Record all attempts; a fault/unknown meter is saved as NULL, not zero."""
         stamp = aware(when).isoformat()
         grid = valid_power(state.get("meter_w")) if state.get("status") == "OK" else None
-        heater = valid_power(state.get("simulated_boiler_w")) if grid is not None else None
+        requested = valid_power(state.get('requested_boiler_w'))
         status = str(state.get("status") or "UNKNOWN")[:40]
         coverage = str(state.get("measurement_coverage") or "NONE")[:40]
         with self.lock:
             with self.db:
                 self.db.execute(
                     "INSERT OR REPLACE INTO measurements VALUES (?,?,?,?,?)",
-                    (stamp, grid, heater, status, coverage))
+                    (stamp, grid, None, status, coverage))
+                if 'requested_boiler_w' in state:
+                    mode = str(state.get('output_control', {}).get('mode') or 'UNKNOWN')[:40]
+                    self.db.execute('INSERT OR REPLACE INTO output_requests_v1 VALUES (?,?,?)',
+                                    (stamp, requested, mode))
             self._maintenance_if_due(aware(when))
 
     def record_forecast(self, when: datetime, profile: dict) -> None:
@@ -156,6 +162,9 @@ class HistoryStore:
                 FROM measurements WHERE timestamp>=? AND timestamp<=?
               ORDER BY timestamp
             """, (start.isoformat(), end.isoformat(), start.isoformat(), end.isoformat())).fetchall()
+            requests = dict(self.db.execute(
+                'SELECT timestamp,requested_w FROM output_requests_v1 WHERE timestamp>=? AND timestamp<=?',
+                (start.isoformat(), end.isoformat())).fetchall())
         # Group points by time bucket; preserve min/max of signed grid for
         # zero crossing and spikes, and keep explicit NULL at failures.
         # Never average away negative injection with positive purchases.
@@ -184,6 +193,7 @@ class HistoryStore:
             "start":start.isoformat(), "end":end.isoformat(),
             "count":len(rows),
             "points":[{"at":t,"grid_w":grid,"simulated_boiler_w":heater,
+                       "requested_boiler_w":requests.get(t),
                        "status":status,"coverage":coverage,"gap_before":t in real_gaps}
                       for t,grid,heater,status,coverage in rows],
             "signed_convention":"positive=achat / negative=injection",
@@ -298,7 +308,7 @@ class HistoryStore:
                 "Date locale CH", "Heure locale CH", "Date-heure UTC ISO8601",
                 "Fuseau UTC", "Puissance reseau signee (W)",
                 "Achat reseau (W)", "Injection reseau (W)",
-                "Puissance reseau signee (kW)", "Chauffe virtuelle (W)",
+                "Puissance reseau signee (kW)", "Chauffe virtuelle (W)", "Chauffe demandee (W)",
                 "Etat mesure", "Couverture compteur", "Nature donnees"
             ]
             buf = io.StringIO(newline="")
@@ -313,21 +323,21 @@ class HistoryStore:
             )
             try:
                 cur = db.execute("""
-                    SELECT timestamp,grid_w,simulated_heater_w,status,coverage
-                      FROM archived_measurements
-                     WHERE timestamp>=? AND timestamp<?
-                    UNION ALL
-                    SELECT timestamp,grid_w,simulated_heater_w,status,coverage
-                      FROM measurements
-                     WHERE timestamp>=? AND timestamp<?
-                    ORDER BY timestamp
+                    SELECT m.timestamp,m.grid_w,m.simulated_heater_w,m.status,m.coverage,r.requested_w
+                    FROM (SELECT timestamp,grid_w,simulated_heater_w,status,coverage
+                            FROM archived_measurements WHERE timestamp>=? AND timestamp<?
+                          UNION ALL
+                          SELECT timestamp,grid_w,simulated_heater_w,status,coverage
+                            FROM measurements WHERE timestamp>=? AND timestamp<?) AS m
+                    LEFT JOIN output_requests_v1 AS r ON r.timestamp=m.timestamp
+                    ORDER BY m.timestamp
                 """, (start, end, start, end))
                 count = 0
                 while True:
                     batch = cur.fetchmany(1000)
                     if not batch:
                         break
-                    for ts, watts, virtual, status, coverage in batch:
+                    for ts, watts, virtual, status, coverage, requested in batch:
                         instant = parse_time(ts)
                         local = instant.astimezone(tz)
                         delta = local.strftime("%z")
@@ -342,9 +352,10 @@ class HistoryStore:
                             self._fr_number(max(0, -watts) if watts is not None else None, excel=excel),
                             self._fr_number(watts, as_kw=True, excel=excel),
                             self._fr_number(virtual, excel=excel),
+                            self._fr_number(requested, excel=excel),
                             self._safe_csv_text(status),
                             self._safe_csv_text(coverage),
-                            "Mesure reseau reelle ; chauffe virtuelle simulee",
+                            "Mesure reseau ; demande de chauffe non mesuree ; valeurs virtuelles historiques",
                         ])
                     count += len(batch)
                     # Raw source records are not decimated or synthesized.
@@ -476,13 +487,14 @@ class HistoryStore:
             raise ValueError("Noncanonical archive date")
         with self.lock:
             rows = self.db.execute("""
-                SELECT * FROM archived_measurements
-                WHERE timestamp>=? AND timestamp<? ORDER BY timestamp""",
+                SELECT m.timestamp,m.grid_w,m.simulated_heater_w,m.status,m.coverage,r.requested_w
+                FROM archived_measurements m LEFT JOIN output_requests_v1 r ON r.timestamp=m.timestamp
+                WHERE m.timestamp>=? AND m.timestamp<? ORDER BY m.timestamp""",
                 (date, (checked+timedelta(days=1)).date().isoformat())).fetchall()
         import csv
         import io
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["timestamp_utc","reseau_signe_W","chauffe_virtuelle_W","statut","couverture"])
+        writer.writerow(["timestamp_utc","reseau_signe_W","chauffe_virtuelle_historique_W","statut","couverture","chauffe_demandee_non_mesuree_W"])
         writer.writerows(rows)
         return output.getvalue().encode("utf-8")

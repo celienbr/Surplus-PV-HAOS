@@ -1,14 +1,13 @@
 """Read Forecast.Solar's standard Home Assistant sensors (NO writes/API actions).
 
 Raw Forecast.Solar kWh represent gross PV production, not usable export.
-Assumed house and future battery shares are SUBTRACTED explicitly before
-calling the advisory temperature algorithm. All outputs are demonstrative.
+House and battery consumption are unknown; gross PV is never presented as
+available surplus and therefore cannot authorize forecast-based optimization.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
 
-from .adaptive_temperature import SurplusOutlook, adaptive_temperature
 from .pac_estimate import forecast_pac_kwh
 from .open_meteo_weather import read_tomorrow_from_ha
 
@@ -109,8 +108,8 @@ def build_weather_preview(options: dict, now: datetime, client,
         "pac_model_status": "OFF" if not options["pac_enabled"] else "WAITING",
         "usable_today_assumed_kwh": None,
         "usable_tomorrow_assumed_kwh": None,
-        "target_c": options["demo_max_c"],
-        "manual_max_c": options["demo_max_c"],
+        "target_c": options["boiler_max_temp_c"],
+        "manual_max_c": options["boiler_max_temp_c"],
         "minimum_c": options["weather_min_c"],
         "decision": "Météo désactivée : limite haute manuelle.",
         "reserve_for_other_uses_w": options["weather_reserve_w"],
@@ -144,13 +143,10 @@ def build_weather_preview(options: dict, now: datetime, client,
                 options["forecast_tomorrow_entity"] + "]: " + str(error)) from error
         today = forecast_kwh(today_state, now)
         tomorrow = forecast_kwh(tomorrow_state, now)
-        today_use = max(0.0, today.value_kwh - options["house_today_kwh"] -
-                        options["battery_today_kwh"])
         data.update({
             "pv_status": "OK",
             "gross_today_remaining_kwh": round(today.value_kwh, 2),
             "gross_tomorrow_kwh": round(tomorrow.value_kwh, 2),
-            "usable_today_assumed_kwh": round(today_use, 2),
             "forecast_timestamp": min(today.updated_at,
                                       tomorrow.updated_at).isoformat(),
         })
@@ -162,7 +158,7 @@ def build_weather_preview(options: dict, now: datetime, client,
             "error": str(error)[:240],
             "pac_model_status": "NOT_EVALUATED" if options["pac_enabled"] else "OFF",
             "decision": "Prévisions Forecast.Solar indisponibles : "
-                        "vérifier les entités PV. Repli sur le plafond manuel fictif.",
+                        "vérifier les entités PV. Repli sur le plafond utilisateur.",
         })
         return data
 
@@ -171,7 +167,6 @@ def build_weather_preview(options: dict, now: datetime, client,
     # the model is enabled remains an unavailable forecast below.
     data["pac_excluded_by_user"] = not options["pac_enabled"]
 
-    pac_kwh = 0.0
     pac_estimate = None
     pac_weather = None
     if options["pac_enabled"]:
@@ -201,7 +196,6 @@ def build_weather_preview(options: dict, now: datetime, client,
                 balance_temp_c=options["pac_balance_temp_c"],
                 reference_cop=options["pac_reference_cop"],
                 cop_change_per_c=options["pac_cop_change_per_c"])
-            pac_kwh = pac_estimate.energy_kwh
         except (ValueError, OSError, KeyError, TypeError, TimeoutError) as error:
             message = str(error)[:240]
             data.update({
@@ -216,48 +210,12 @@ def build_weather_preview(options: dict, now: datetime, client,
             })
             return data
 
-    tomorrow_use = max(0.0, tomorrow.value_kwh - options["house_tomorrow_kwh"] -
-                       options["battery_tomorrow_kwh"] - pac_kwh)
-    outlook = SurplusOutlook(
-        updated_at=min(today.updated_at, tomorrow.updated_at),
-        remaining_today_kwh=today_use,
-        tomorrow_kwh=tomorrow_use,
-    )
-    advice = adaptive_temperature(
-        now=now,
-        water_temperature_c=options["demo_water_c"],
-        minimum_c=options["weather_min_c"],
-        high_limit_c=options["demo_max_c"],
-        forecast_enabled=True,
-        outlook=outlook,
-        volume_l=options["weather_volume_l"],
-        comfort_buffer_c=options["weather_buffer_c"],
-        estimated_demand_tomorrow_kwh=options["weather_heat_demand_kwh"],
-        reserve_other_uses_w=options["weather_reserve_w"],
-        base_export_margin_w=options["target_export_w"],
-    )
-    if advice.state != "ADAPTIVE":
-        data.update({
-            "status": "UNAVAILABLE",
-            "error": advice.explanation,
-            "decision": advice.explanation + (
-            " PAC exclue du calcul à la demande de l’utilisateur (hypothèse, pas mesure)."
-            if not options["pac_enabled"] else ""),
-            "pac_model_status": "ESTIMATED" if pac_estimate else "OFF",
-        })
-        return data
     data.update({
-        "status": "ADAPTIVE",
+        "status": "UNAVAILABLE",
         "gross_today_remaining_kwh": round(today.value_kwh, 2),
         "gross_tomorrow_kwh": round(tomorrow.value_kwh, 2),
-        "usable_today_assumed_kwh": round(today_use, 2),
-        "usable_tomorrow_assumed_kwh": round(tomorrow_use, 2),
-        "target_c": advice.target_c,
-        "decision": advice.explanation + (
-            " PAC exclue du calcul à la demande de l’utilisateur (hypothèse, pas mesure)."
-            if not options["pac_enabled"] else ""),
-        "reserve_for_other_uses_w": advice.reserved_export_w,
-        "forecast_timestamp": outlook.updated_at.isoformat(),
+        "decision": "Consommations maison et batterie inconnues : surplus prévisionnel indisponible ; plafond utilisateur conservé.",
+        "forecast_timestamp": min(today.updated_at, tomorrow.updated_at).isoformat(),
         "pac_model_status": "ESTIMATED" if pac_estimate else "OFF",
         "pac_outdoor_tomorrow_c": (pac_estimate.temperature_c
                                   if pac_estimate else None),

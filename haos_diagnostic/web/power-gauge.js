@@ -4,25 +4,23 @@
  const finite=n=>typeof n==='number'&&Number.isFinite(n);
  function powerGauge(s){
   if(!s || typeof s!=='object')return {value:null,detail:'État indisponible · état physique non vérifié'};
-  const diagnostic=!!root&&new URLSearchParams(root.location.search).get('diagnostic')==='1';
-  const mode=s.mode, manual=['MANUEL','MANUEL_REEL','MANUEL_BANC'].includes(mode);
-  const auto=['AUTO','AUTO_REEL','AUTO_BANC'].includes(mode);
-  const label=mode==='AUTO'?(diagnostic?'Calcul simulé':'Arrêt'):mode==='MANUEL'?'Simulation':mode==='MANUEL_BANC'||mode==='AUTO_BANC'?'Banc isolé':mode==='BANC_DAC'?'Banc DAC':mode==='AUTO_REEL'?'Consigne calculée':'Commande acceptée';
-  if(mode==='BANC_DAC')return {value:null,detail:'Banc DAC : courant direct, pourcentage de puissance indisponible · état physique non vérifié'};
+  const mode=s.mode, manual=mode==='MANUEL_REEL';
+  const auto=['AUTO','AUTO_REEL'].includes(mode);
+  const label=mode==='AUTO'?'Arrêt':mode==='AUTO_REEL'?'Consigne calculée':'Commande acceptée';
   if(!manual&&!auto)return {value:null,detail:'Mode inconnu · état physique non vérifié'};
   let n;
-  if(mode==='AUTO'&&!diagnostic)n=0;
+  if(mode==='AUTO')n=0;
   else if(manual){if(typeof s.enabled!=='boolean')n=null;else n=s.enabled?s.manual_percent:0;}
   else if(mode!=='AUTO'&&s.enabled===false)n=0;
   else if(mode!=='AUTO'&&s.enabled!==true)n=null;
-  else n=finite(s.auto_virtual_power_w)&&finite(s.max_power_w)&&s.max_power_w>0?100*s.auto_virtual_power_w/s.max_power_w:null;
+  else n=finite(s.auto_requested_power_w)&&finite(s.max_power_w)&&s.max_power_w>0?100*s.auto_requested_power_w/s.max_power_w:null;
   return {value:finite(n)?Math.min(100,Math.max(0,n)):null,detail:label+' · état physique non vérifié'};
  }
  function render(s){
   const result=powerGauge(s),track=document.getElementById('power-track');
   if(!track)return;
   const value=result.value,display=value===null?'—':Number(value.toFixed(1)).toLocaleString('fr-CH')+' %';
-  const manual=!!s&&['MANUEL','MANUEL_REEL','MANUEL_BANC'].includes(s.mode);
+  const manual=!!s&&s.mode==='MANUEL_REEL';
   document.getElementById('power-label').textContent=(manual?'Commande DAC : ':'Puissance demandée au boiler : ')+display;
   document.getElementById('power-fill').style.width=(value??0)+'%';
   document.getElementById('power-detail').textContent=result.detail;

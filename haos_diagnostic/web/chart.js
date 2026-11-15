@@ -26,16 +26,12 @@
  }
  const definitions=[
   {id:'grid',key:'grid_w',label:'Réseau gPlugK',kind:'mesure réelle',unit:'kW',factor:.001,axis:'power',color:'network',dash:[],source:'history'},
-  {id:'virtual',key:'simulated_boiler_w',label:'Chauffe virtuelle',kind:'simulation enregistrée',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[2,3],source:'history'},
+  {id:'virtual',key:'simulated_boiler_w',label:'Chauffe virtuelle historique',kind:'archive antérieure',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[2,3],source:'history'},
+  {id:'requested',key:'requested_boiler_w',label:'Chauffe demandée',kind:'commande enregistrée, non mesurée',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[5,2],source:'history'},
   {id:'pv',key:'pv_w',label:'Production PV',kind:'prévision',unit:'kW',factor:.001,axis:'power',color:'solar',dash:[8,4],source:'forecast'},
   {id:'temperature',key:'temperature_c',label:'Température extérieure',kind:'prévision',unit:'°C',factor:1,axis:'temp',color:'temperature',dash:[7,4],source:'forecast'},
   {id:'pac',key:'pac_w',label:'Consommation PAC',kind:'estimation',unit:'kW',factor:.001,axis:'power',color:'pac',dash:[3,4],source:'forecast'},
-  {id:'surplus',key:'surplus_w',label:'Surplus disponible',kind:'estimation',unit:'kW',factor:.001,axis:'power',color:'surplus',dash:[3,4],source:'forecast'},
-  {id:'budget',key:'heater_budget_w',label:'Budget de chauffe',kind:'simulation prévisionnelle',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[10,3,2,3],source:'forecast'},
-  {id:'planned',key:'planned_boiler_w',label:'Chauffe planifiée',kind:'simulation thermique',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[6,2],source:'forecast'},
-  {id:'backup',key:'planned_grid_backup_w',label:'Appoint réseau planifié',kind:'simulation autorisée',unit:'kW',factor:.001,axis:'power',color:'network',dash:[2,5],source:'forecast'},
-  {id:'water',key:'projected_water_c',label:'Température eau projetée',kind:'simulation thermique',unit:'°C',factor:1,axis:'target',color:'surplus',dash:[2,3],source:'forecast'},
-  {id:'target',key:'target_c',label:'Consigne boiler',kind:'consigne calculée en simulation',unit:'°C',factor:1,axis:'target',color:'target',dash:[5,3],source:'forecast'}
+  {id:'surplus',key:'surplus_w',label:'Surplus disponible',kind:'estimation',unit:'kW',factor:.001,axis:'power',color:'surplus',dash:[3,4],source:'forecast'}
  ];
  function series(history,profile,now=Date.now()){
   return definitions.map(d=>({...d,points:(d.source==='history'?history:profile?.points||[])
@@ -84,12 +80,12 @@
  const $=id=>document.getElementById(id),canvas=$('chart-power'),viewport=$('viewport-power');if(!canvas)return;
  let status=null,history=[],liveProfile={},archived=null,savedAt=null,anchor=Date.now(),isLive=true,zoom=1,selected=null,range='all';
  // Keep the default view readable; the remaining series stay selectable.
- const visible=new Set(['grid','pv','planned','water','target']);let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
+ const visible=new Set(['grid','pv','requested']);let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
  let legendSignature='',renderQueued=false,pendingCenter=true;
  function schedule(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;draw();});}
  function context(can,w,h){const dpr=Math.min(devicePixelRatio||1,2);can.width=Math.round(w*dpr);can.height=Math.round(h*dpr);can.style.width=w+'px';can.style.height=h+'px';const ctx=can.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return ctx;}
  function palette(){return window.SurplusTheme.colors();}
- function availableSeries(){const all=series(history,archived||liveProfile);return all.filter(s=>!['target','planned','backup','water'].includes(s.id)||s.points.some(p=>good(p.value)));}
+ function availableSeries(){const all=series(history,archived||liveProfile);return all;}
  function draw(){
   const now=Date.now();if(isLive)anchor=now;
   start=range==='future'?anchor:anchor-48*HOUR;end=range==='past'?anchor:anchor+48*HOUR;

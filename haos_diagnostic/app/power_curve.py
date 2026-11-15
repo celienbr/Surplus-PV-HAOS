@@ -9,9 +9,9 @@ from .gp8600 import number
 
 class PowerCurve:
     def __init__(self, points, *, source, validated=False):
-        if source not in ("simulation", "measurement"):
+        if source != "measurement":
             raise ValueError("Unknown curve provenance")
-        if type(validated) is not bool or (validated and source != "measurement"):
+        if type(validated) is not bool:
             raise ValueError("Only measured curves can be validated")
         if not isinstance(points, (list, tuple)) or len(points) < 2:
             raise ValueError("At least two calibration points are required")
