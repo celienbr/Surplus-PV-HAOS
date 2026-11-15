@@ -1,6 +1,6 @@
 name: "Surplus PV"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.17"
+version: "1.0.0-alpha.18"
 description: "Gestion du surplus photovoltaïque et du chauffe-eau"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -36,6 +36,7 @@ options:
   target_export_w: 100
   max_power_w: 6000
   weather_enabled: false
+  predictive_target_enabled: false
   comfort_time: "06:00"
   grid_backup_enabled: false
   use_addon_settings: false
@@ -85,6 +86,7 @@ schema:
   target_export_w: "int(0,2000)"
   max_power_w: "int(100,6000)"
   weather_enabled: bool
+  predictive_target_enabled: bool
   comfort_time: str
   grid_backup_enabled: bool
   use_addon_settings: bool

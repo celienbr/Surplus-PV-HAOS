@@ -113,6 +113,7 @@ def make_hourly_profile(options: dict, now: datetime, client) -> dict:
         "timezone": options["pac_timezone"],
         "solar_status": "NOT_CONFIGURED",
         "daily_pv_status": "UNAVAILABLE",
+        "daily_pv_updated_at": None,
         "daily_pv_error": None,
         "daily_today_remaining_kwh": None,
         "daily_tomorrow_kwh": None,
@@ -152,6 +153,7 @@ def make_hourly_profile(options: dict, now: datetime, client) -> dict:
         today = forecast_kwh(client.get_state(options["forecast_today_entity"]), now)
         tomorrow = forecast_kwh(client.get_state(options["forecast_tomorrow_entity"]), now)
         result["daily_pv_status"] = "OK"
+        result["daily_pv_updated_at"] = min(today.updated_at, tomorrow.updated_at).isoformat()
         result["daily_today_remaining_kwh"] = round(today.value_kwh, 2)
         result["daily_tomorrow_kwh"] = round(tomorrow.value_kwh, 2)
     except (OSError, ValueError, KeyError, TypeError, TimeoutError, AttributeError) as error:
