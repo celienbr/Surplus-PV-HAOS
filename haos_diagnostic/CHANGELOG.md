@@ -1,3 +1,7 @@
+# 1.0.0-alpha.19 — publiée (validation HAOS réelle en attente)
+
+Interface B3 v6.1 et réglages utilisateur persistants ; publication effectuée ; validation HAOS réelle en attente.
+
 # Historique des versions de l'application Surplus PV
 
 ## 1.0.0-alpha.17 — candidat en validation

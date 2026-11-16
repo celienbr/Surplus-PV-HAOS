@@ -1,25 +1,27 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.18
+# Surplus PV — Home Assistant OS 1.0.0-alpha.19
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.17
+## Mise à jour depuis alpha.18
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.18, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.19, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
-La consigne prédictive Forecast.Solar est désactivée par défaut après mise à
-jour. Pour l'activer, renseigner `predictive_target_enabled: true` et la
-configuration Forecast.Solar horaire dans les options de l'add-on, puis
-redémarrer. En cas de prévisions absentes, incomplètes ou périmées, les règles
-Alpha.17 s'appliquent. Le PV prévu est brut ; seul le compteur réel permet la
-chauffe de stockage, et l'appoint réseau reste limité au minimum de confort.
+Dans Pilotage, la consigne AUTO utilisateur est distincte du plafond thermique
+`boiler_max_temp_c` des options Supervisor. Le choix Prévision réutilise le
+calcul Forecast.Solar ; si les données manquent ou sont périmées, le repli
+indiqué à l'écran s'applique. Le PV prévu reste brut et ne garantit pas de
+surplus réel. L'appoint réseau reste limité au minimum de confort autorisé.
+Les préférences de confort dans l'interface sont verrouillées si
+`use_addon_settings` est activé ; les options Supervisor font alors autorité.
+Aucun réglage d'interface ne peut relever le plafond thermique.
 
 ## Configuration réelle
 
@@ -58,18 +60,36 @@ ni les prévisions ni l'heure de confort. S1 et K2 ne disposent pas de retour
 mesuré dans l'application ; S2 est le secours matériel. Les protections thermiques
 indépendantes restent nécessaires.
 
-Si des préférences ont été enregistrées dans l'ancienne interface, elles restent
-actives au premier démarrage. Les recopier dans les options HA, activer
-`use_addon_settings`, puis redémarrer. Les préférences d'origine sont conservées.
-Vérifier après mise à jour le plafond `boiler_max_temp_c` et les autres options.
-Sans plafond configuré, la commande réelle reste inhibée.
+Les préférences Alpha.18 sont conservées dans le fichier v3 sous `legacy` ;
+un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
+lorsqu'un fichier existait. Sans plafond configuré, la commande réelle
+reste inhibée. Les réglages MANUEL mémorisés ne sont jamais réappliqués
+automatiquement au démarrage.
 
-## Retour arrière
+## Retour arrière vers Alpha.18 — procédure obligatoire
 
-Sauvegarder d'abord les données et journaux récents. Dans Paramètres → Système →
-Sauvegardes, restaurer la sauvegarde alpha.17 de la même application. Cette
-restauration remplace les données par leur état sauvegardé : préserver séparément
-les acquisitions postérieures. Ne pas supprimer /data ni désinstaller l'add-on.
+Avant toute opération, sauvegarder Home Assistant, l'application et
+`/data`. Conserver séparément hors du Raspberry Pi une copie datée des
+bases SQLite, des nouvelles observations et des options Supervisor.
+
+**Alpha.18 ne peut pas lire les préférences B3 v3.** Avant le retour arrière,
+arrêter l'application et archiver intégralement le fichier
+`/data/surplus_pv_user_settings.json` au format v3. Lire son champ
+`legacy` : s'il contient un objet JSON, restaurer exactement cet objet
+sous le nom `surplus_pv_user_settings.json` en conservant les permissions ;
+s'il vaut `null`, laisser ce nom de fichier absent. Conserver le fichier
+v3 archivé pour une éventuelle reprise vers Alpha.19.
+
+**Ne pas restaurer automatiquement `.pre-b3.backup` :** après plusieurs
+migrations cette sauvegarde peut contenir des valeurs plus anciennes que
+l'objet `legacy` du fichier v3. Conserver les deux pièces comme preuves.
+Restaurer ensuite le logiciel Alpha.18 dans **la même application**,
+sans désinstallation destructive, et contrôler le slug, les options, les
+consignes et les historiques avant tout fonctionnement.
+Une restauration Home Assistant peut écraser les données acquises depuis
+la sauvegarde ; conserver et réconcilier ces données récentes.
+La procédure a été testée avec le lecteur de préférences Alpha.18,
+mais **pas encore sur une installation HAOS réelle**.
 
 La mise à jour et les essais logiciels ne constituent pas une validation physique
 des contacts, des températures, des courants ou de la chaîne thermique.

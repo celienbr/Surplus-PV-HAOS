@@ -1,12 +1,16 @@
 """Versioned UI preferences; installation settings never enter the UI write API."""
 import json
 import os
+import tempfile
+import fcntl
 from pathlib import Path
 
 USER_FIELDS = frozenset({"boiler_max_temp_c", "weather_min_c", "comfort_time",
                          "weather_enabled", "pac_enabled", "grid_backup_enabled"})
 LEGACY_V2_FIELDS = (USER_FIELDS - {"boiler_max_temp_c"}) | {"demo_max_c"}
 LEGACY_FIELDS = (LEGACY_V2_FIELDS - {"grid_backup_enabled"}) | {"forecast_solar_entry_id"}
+B3_FIELDS = frozenset({'auto_target_c', 'predictive_target_enabled', 'weather_min_c',
+                       'comfort_time', 'manual_target_c', 'manual_percent'})
 
 
 def read_settings(path: Path, options: dict) -> tuple[dict, str]:
@@ -15,6 +19,15 @@ def read_settings(path: Path, options: dict) -> tuple[dict, str]:
     saved = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(saved, dict):
         raise ValueError("Invalid saved user settings")
+    b3 = {}
+    if saved.get('schema_version') == 3:
+        if set(saved) != {'schema_version', 'legacy', 'b3'} or not isinstance(saved['b3'], dict) or set(saved['b3']) - B3_FIELDS:
+            raise ValueError('Invalid B3 settings schema')
+        b3, saved = saved['b3'], saved['legacy']
+        if saved is None:
+            return _merge_b3(options, b3), ''
+        if not isinstance(saved, dict):
+            raise ValueError('Invalid legacy settings')
     if set(saved) == LEGACY_FIELDS:
         backup = path.with_name(path.name + ".v1.backup")
         if not backup.exists():
@@ -57,4 +70,71 @@ def read_settings(path: Path, options: dict) -> tuple[dict, str]:
     if options.get('boiler_max_temp_c') is not None:
         merged['boiler_max_temp_c'] = options['boiler_max_temp_c']
     merged["forecast_solar_entry_id"] = options.get("forecast_solar_entry_id") or legacy_id
-    return merged, legacy_id
+    return _merge_b3(merged, b3), legacy_id
+
+
+def _merge_b3(options, b3):
+    merged = dict(options)
+    # Supervisor remains authoritative for the legacy comfort fields when
+    # use_addon_settings is active. B3 never changes the physical ceiling.
+    for name, value in b3.items():
+        if name in ('weather_min_c', 'comfort_time') and options.get('use_addon_settings', False):
+            continue
+        merged[name] = value
+    return merged
+
+
+def write_b3_settings(path: Path, values: dict):
+    """Atomic replacement, preserving the complete old schema for rollback.
+
+    Caller must serialize and validate values before invoking this function.
+    """
+    if not isinstance(values, dict) or set(values) - B3_FIELDS:
+        raise ValueError('Champs de préférences interdits')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + '.lock')
+    with lock_path.open('a+b') as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _write_b3_settings_locked(path, values)
+
+
+def _write_b3_settings_locked(path: Path, values: dict):
+    old = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+    if old is not None and not isinstance(old, dict):
+        raise ValueError('Invalid saved user settings')
+    if old is not None and old.get('schema_version') == 3:
+        if set(old) != {'schema_version', 'legacy', 'b3'} or not isinstance(old['b3'], dict) or set(old['b3']) - B3_FIELDS:
+            raise ValueError('Invalid B3 settings schema')
+        legacy, previous = old['legacy'], old['b3']
+    else:
+        if old is not None and not (set(old) == LEGACY_FIELDS or
+                (set(old) == {'schema_version', 'settings', 'migrated_forecast_solar_entry_id'}
+                 and old.get('schema_version') == 2 and isinstance(old.get('settings'), dict)
+                 and set(old['settings']) in (USER_FIELDS, LEGACY_V2_FIELDS))):
+            raise ValueError('Invalid saved user settings schema')
+        legacy, previous = old, {}
+    payload = {'schema_version': 3, 'legacy': legacy, 'b3': {**previous, **values}}
+    if old is not None and old.get('schema_version') != 3:
+        backup = path.with_name(path.name + '.pre-b3.backup')
+        try:
+            with backup.open('xb') as f:
+                os.chmod(backup, 0o600)
+                f.write(path.read_bytes()); f.flush(); os.fsync(f.fileno())
+        except FileExistsError:
+            pass
+    fd, temporary = tempfile.mkstemp(prefix='.spv-settings-', dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, allow_nan=False)
+            f.flush(); os.fsync(f.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)

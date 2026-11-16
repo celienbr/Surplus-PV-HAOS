@@ -20,6 +20,9 @@ function render(p){
  const age=(Date.now()-measuredAt)/1000;
  const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
   Number.isFinite(age)&&age>=-2&&age<=(o.boiler_temperature_max_age_seconds??60);
+ text('summary-grid',watts(p.meter_w));
+ text('summary-temp',measured?celsius(output.temperature_c):'—');
+ text('summary-power',output.mode==='AUTO_REEL'&&output.enabled===true?watts(output.auto_requested_power_w):output.mode==='AUTO'?'0 W':'—');
  text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
  text('boiler-headline',measured?celsius(output.temperature_c):'Température inconnue');
  const today=typeof w.gross_today_remaining_kwh==="number"?w.gross_today_remaining_kwh:prof.daily_today_remaining_kwh;

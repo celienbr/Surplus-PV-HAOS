@@ -15,7 +15,8 @@ import sqlite3
 import time
 
 from .controller import Parameters, SurplusRegulator, Decision
-from .user_settings import read_settings
+from .user_settings import read_settings, write_b3_settings, B3_FIELDS
+from .auto_target import resolve_auto_target
 from .comfort_planner import plan_comfort
 from .ha_client import HomeAssistantClient
 from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
@@ -63,6 +64,9 @@ def parse_options(source: dict) -> dict:
         "max_power_w": float(source.get("max_power_w", 6000)),
         "weather_enabled": source.get("weather_enabled", False),
         "predictive_target_enabled": source.get("predictive_target_enabled", False),
+        "auto_target_c": source.get("auto_target_c"),
+        "manual_target_c": source.get("manual_target_c"),
+        "manual_percent": source.get("manual_percent", 0),
         "comfort_time": source.get("comfort_time", "06:00"),
         "grid_backup_enabled": source.get("grid_backup_enabled", False),
         "use_addon_settings": source.get("use_addon_settings", False),
@@ -167,6 +171,15 @@ def parse_options(source: dict) -> dict:
         raise ValueError("PAC timezone not supported") from error
     if not 30 <= options["weather_min_c"] <= options["boiler_max_temp_c"]:
         raise ValueError("Minimum must not exceed maximum")
+    for key in ('auto_target_c', 'manual_target_c'):
+        if options[key] is not None:
+            options[key] = number(options[key], 30, 80)
+            # A Supervisor ceiling lowered after saving always wins.
+            options[key] = min(options[key], options['boiler_max_temp_c'])
+    options['manual_percent'] = number(options['manual_percent'], 0, 100)
+    if options['auto_target_c'] is not None:
+        # A new Supervisor minimum can supersede an older stored preference.
+        options['auto_target_c'] = max(options['auto_target_c'], options['weather_min_c'])
     limits = {
         "comfort_margin_minutes": (0, 120),
         "comfort_grace_minutes": (0, 120),
@@ -328,6 +341,7 @@ class Diagnostic:
             temp_limit_c=self.options["boiler_max_temp_c"],
         ))
         self.lock = Lock()
+        self.preferences_lock = Lock()
         self.history = deque(maxlen=180)
         self.weather_toggle_token = secrets.token_urlsafe(32)
         self.profile_wake = Event()
@@ -343,6 +357,7 @@ class Diagnostic:
         }
         self.predictive = {"status": "WAITING", "target_c": None, "fallback": True,
                            "reason": "En attente de prévisions et de température valides."}
+        self.auto_applied = None
         self.sensor_diagnostics = {"pi": None, "po": None}
         self.latest = {
             "status": "STARTING",
@@ -366,6 +381,7 @@ class Diagnostic:
         timing = None
         grid_generation = None
         with self.lock:
+            self.auto_applied = None
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
                 if not self.output.snapshot()['auto_suspended']:
@@ -513,25 +529,16 @@ class Diagnostic:
                     decision = self.regulator.invalid_data('Incomplete import measurement: heating inhibited')
                 else:
                     old_command = self.regulator.command_w
-                    limit = self.options['boiler_max_temp_c']
+                    target = resolve_auto_target(self.options, self.weather, self.predictive, now)
+                    limit = target['target_c']
+                    if limit is None:
+                        raise ValueError('Consigne calculée invalide ; AUTO inhibé')
                     reserve = self.options['target_export_w']
                     if self.weather_enabled:
                         reserve += self.options['weather_reserve_w']
-                        forecast_at = self.weather.get('forecast_timestamp')
-                        if forecast_at and self.weather.get('status') == 'ADAPTIVE':
-                            stamp = datetime.fromisoformat(forecast_at)
-                            if -300 <= (now-stamp).total_seconds() <= 10800:
-                                limit = self.weather['target_c']
-                    if self.options['predictive_target_enabled'] and self.predictive.get('status') == 'OK':
-                        try:
-                            calculated = datetime.fromisoformat(self.predictive['calculated_at'])
-                            source_at = datetime.fromisoformat(self.predictive['source_updated_at'])
-                            if all(-300 <= (now - t).total_seconds() <= 10800 for t in (calculated, source_at)):
-                                limit = self.predictive['target_c']
-                        except (KeyError, ValueError, TypeError):
-                            pass  # explicit Alpha.17 fallback
                     decision = self.regulator.step(meter_w, water_c, temp_limit_c=limit,
                                                    target_export_w=reserve)
+                    self.auto_applied = {**target, 'at': now.isoformat()}
                     if decision.state == 'AUTO_READY':
                         surplus_command = decision.command_w if new_sample else old_command
                         available = old_command - meter_w - reserve
@@ -811,6 +818,38 @@ class Diagnostic:
             if values.get('action') in ('stop', 'mode', 'recover'):
                 self.startup_auto_pending = False
 
+    def set_user_preferences(self, changes):
+        """Validate and persist preferences without issuing an output command."""
+        if not isinstance(changes, dict) or not changes or set(changes) - B3_FIELDS:
+            raise ValueError('Champs de préférences interdits')
+        if self.user_settings_path is None:
+            raise ValueError('Stockage des préférences indisponible')
+        with self.preferences_lock:
+            with self.lock:
+                if not self.options['boiler_ceiling_configured']:
+                    raise ValueError('Plafond du boiler inconnu')
+                if self.options['use_addon_settings'] and set(changes) & {'weather_min_c', 'comfort_time'}:
+                    raise ValueError('Confort contrôlé par les options Supervisor')
+                ceiling = self.options['boiler_max_temp_c']
+                for key in ('auto_target_c', 'manual_target_c'):
+                    if key in changes:
+                        number(changes[key], 30, ceiling)
+                candidate = {**self.options, **changes}
+                if (candidate.get('auto_target_c') is not None and
+                        number(candidate['auto_target_c'], 30, ceiling) < number(candidate['weather_min_c'], 30, ceiling)):
+                    raise ValueError('La consigne AUTO doit atteindre le minimum de confort')
+                validated = parse_options(candidate)
+                saved = {key: validated[key] for key in changes}
+            # Storage can be slow: never hold the fast control lock over fsync.
+            write_b3_settings(self.user_settings_path, saved)
+            with self.lock:
+                self.options.update(saved)
+                if set(changes) & {'auto_target_c', 'predictive_target_enabled', 'weather_min_c', 'comfort_time'}:
+                    self.auto_applied = None
+                    self.predictive = {'status': 'WAITING', 'target_c': None, 'fallback': True,
+                                       'reason': 'Réglages modifiés ; nouveau calcul en attente.'}
+                    self.profile_wake.set()
+
     def _set_output(self, values):
         if not isinstance(values, dict):
             raise ValueError('Expected command object')
@@ -1082,7 +1121,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.18",
+            "version": "1.0.0-alpha.19",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1090,6 +1129,9 @@ class Diagnostic:
             "boiler_temperature_diagnostic": dict(self.boiler_temperature_diagnostic),
             "comfort": dict(self.comfort),
             "predictive": dict(self.predictive),
+            "auto_target": (resolve_auto_target(self.options, self.weather, self.predictive, datetime.now(timezone.utc))
+                            if self.options['boiler_ceiling_configured'] else None),
+            "auto_applied": dict(self.auto_applied) if self.auto_applied else None,
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
             "physical_outputs": "GP8600_COMMANDE_NON_VERIFIEE",
             "output_control": self.output_status(),
@@ -1357,7 +1399,7 @@ def handler_factory(diag: Diagnostic):
         def do_POST(self):
             # Authenticated Ingress session. Only OutputControl can write the DAC.
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/output", "/api/heartbeat"):
+            if path not in ("/api/output", "/api/heartbeat", "/api/preferences"):
                 self.send_error(405, "No hardware/HA write operations")
                 return
             # HA ingress can remove or rewrite Sec-Fetch-Site and Host,
@@ -1384,6 +1426,8 @@ def handler_factory(diag: Diagnostic):
                     raise ValueError('Expected command and token fields')
                 if path == '/api/output':
                     diag.set_output(content['command'])
+                elif path == '/api/preferences':
+                    diag.set_user_preferences(content['command'])
                 else:
                     diag.set_heartbeat(content['command'])
             except (OSError, sqlite3.Error):
