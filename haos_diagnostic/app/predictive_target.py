@@ -48,7 +48,9 @@ def predictive_target(profile, temperature_c, minimum_c, maximum_c, volume_l, no
               "fallback": True, "calculated_at": now.isoformat(),
               "pv_potential_kwh": None, "thermal_energy_kwh": None,
               "reason": "Fonction désactivée : comportement Alpha.17.",
-              "hysteresis": "NONE", "horizon_end": None}
+              "hysteresis": "NONE", "horizon_end": None,
+              "coverage_status": "UNAVAILABLE", "covered_hours": 0,
+              "missing_hours": 0, "first_missing_hour": None}
     if not enabled:
         return result
     try:
@@ -63,6 +65,8 @@ def predictive_target(profile, temperature_c, minimum_c, maximum_c, volume_l, no
         end_day = now.astimezone(ZONE).date() + timedelta(days=2)
         end = datetime(end_day.year, end_day.month, end_day.day, tzinfo=ZONE).astimezone(UTC)
         cursor, hourly = now, 0.0
+        missing = []
+        known_by_day = {}
         points = sorted(profile["points"], key=lambda p: _instant(p["at"]))
         for point in points:
             start = _instant(point["at"])
@@ -74,11 +78,38 @@ def predictive_target(profile, temperature_c, minimum_c, maximum_c, volume_l, no
             start, stop = max(start, now), min(stop, end)
             if start != cursor:
                 raise ValueError("profil horaire incomplet ou superposé")
-            watts = _number(point["pv_w"], 0, 50000)
-            hourly += watts * (stop-start).total_seconds() / 3600000
+            day = start.astimezone(ZONE).date()
+            # A missing PV hour is unknown, not a fictitious measurement of 0 W.
+            # Complete reported intervals contribute to a conservative lower
+            # bound; holes within a day's reported range remain blocking. A
+            # missing edge interval cannot be asserted to be night: solar
+            # elevation and the provider's coverage are not available here.
+            if point["pv_w"] is None:
+                missing.append((start, day))
+            else:
+                watts = _number(point["pv_w"], 0, 50000)
+                hourly += watts * (stop-start).total_seconds() / 3600000
+                known_by_day.setdefault(day, []).append(start)
             cursor = stop
         if cursor != end:
             raise ValueError("profil horaire incomplet")
+        result["coverage_status"] = "PARTIAL" if missing else "COMPLETE"
+        result["covered_hours"] = sum(len(hours) for hours in known_by_day.values())
+        result["missing_hours"] = len(missing)
+        result["first_missing_hour"] = missing[0][0].isoformat() if missing else None
+        if not known_by_day:
+            raise ValueError("profil PV horaire sans heure exploitable")
+        for day, hours in known_by_day.items():
+            first, last = hours[0], hours[-1]
+            internal = next((stamp for stamp, gap_day in missing
+                             if gap_day == day and first < stamp < last), None)
+            if internal is not None:
+                raise ValueError("lacune PV horaire interne le " + internal.isoformat())
+        local_today = now.astimezone(ZONE).date()
+        local_tomorrow = local_today + timedelta(days=1)
+        if ((today > 0 and local_today not in known_by_day)
+                or (tomorrow > 0 and local_tomorrow not in known_by_day)):
+            raise ValueError("jour avec prévision PV positive sans aucune heure connue")
         potential = min(today + tomorrow, hourly)
         levels = [minimum]
         while levels[-1] < maximum:
@@ -100,7 +131,12 @@ def predictive_target(profile, temperature_c, minimum_c, maximum_c, volume_l, no
         result.update(status="OK", fallback=False, target_c=target,
                       pv_potential_kwh=round(potential, 3), horizon_end=end.isoformat(),
                       thermal_energy_kwh=round(volume * 1.163 * max(0, target-temperature) / 1000, 3),
-                      reason="PV brut borné par les totaux et le profil ; seuils à quatre fois l'énergie de stockage au-dessus du minimum. Le surplus futur reste inconnu.")
+                      reason=("PV brut borné par les totaux et le profil ; "
+                              + ("borne basse conservatrice sur les seules heures renseignées "
+                                 + f"({result['covered_hours']} h connues, {result['missing_hours']} h absentes, "
+                                 + "aucun zéro inventé) ; " if missing else "")
+                              + "seuils à quatre fois l'énergie de stockage au-dessus du minimum. "
+                              + "Le surplus futur reste inconnu."))
     except (ValueError, TypeError, KeyError, OverflowError) as error:
         result["reason"] = "Repli Alpha.17 : " + str(error)[:160]
     return result
