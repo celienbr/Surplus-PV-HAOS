@@ -69,3 +69,8 @@ html.embedded .boiler-status>span{display:none}
 .b3-bottom{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;align-items:start;margin-top:12px}.b3-bottom .overview{display:block}.b3-bottom #profil{min-width:0}.b3-bottom #page-inputs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.b3-bottom .card{margin:0}
 @media(max-width:1000px){.b3-bottom{grid-template-columns:1fr}}
 @media(max-width:600px){.b3-bottom #page-inputs{display:block}.b3-bottom .card{margin-bottom:8px}}
+
+/* AUTO source selection mirrors the existing accessible output-mode buttons. */
+.mode-switch.auto-source-switch{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:6px}
+.comfort-settings{border-top:1px solid var(--border-ui);margin-top:18px;padding-top:12px}
+#auto-source-result:empty,#comfort-settings-result:empty{display:none}
