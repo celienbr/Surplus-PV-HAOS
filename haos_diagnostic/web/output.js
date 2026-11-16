@@ -5,7 +5,7 @@
  const mode=el('output-mode');
  const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(4):'—';
  let state=null,token=null,busy=false,editing=false,selecting=false,queue=[];
- function paint(s,force=false){if((selecting||busy)&&!force)return;if(mode.value!==s.mode)mode.value=s.mode;}
+ function paint(s,force=false){if((selecting||busy)&&!force)return;if(mode.value!==s.mode)mode.value=s.mode;mode.dataset.mode=s.mode;document.querySelectorAll('[data-output-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.outputMode===s.mode)));}
  function render(s){
   state=s;token=s.token||token;window.renderPowerGauge(s);paint(s);
   const manual=s.mode==='MANUEL_REEL';
@@ -29,13 +29,19 @@
   catch(e){queue=[];el('output-error').textContent=String(e);if(state)paint(state,true);}
   finally{busy=false;editing=false;await refresh();}
  }
+ document.querySelectorAll('[data-output-mode]').forEach(b=>b.addEventListener('click',()=>{if(busy||!state||b.dataset.outputMode===state.mode)return;mode.value=b.dataset.outputMode;mode.dispatchEvent(new Event('change'));}));
  mode.addEventListener('focus',()=>{selecting=true;});
  mode.addEventListener('pointerdown',()=>{selecting=true;});
  mode.addEventListener('touchstart',()=>{selecting=true;},{passive:true});
  mode.addEventListener('blur',()=>{selecting=false;setTimeout(()=>{if(!selecting&&!busy&&state)paint(state);},0);});
- mode.onchange=()=>{selecting=false;send({action:'mode',mode:mode.value,target_c:Number(el('manual-target').value),confirmed:true});};
+ mode.onchange=()=>{
+  selecting=false;
+  if(mode.value==='AUTO'){
+   if(!confirm('Confirmer la demande d’arrêt ?')){if(state)paint(state,true);return;}
+   send({action:'stop'});
+  }else send({action:'mode',mode:mode.value,target_c:Number(el('manual-target').value),confirmed:true});
+ };
  el('manual-power').oninput=()=>{editing=true;el('manual-percent').textContent=el('manual-power').value+' %';send({action:'manual',percent:Number(el('manual-power').value)});};
- el('output-stop').onclick=()=>send({action:'stop'});
  el('output-recover').onclick=()=>{if(confirm('Confirmer l’arrêt et la réinitialisation du DAC à zéro ?'))send({action:'recover',confirmed:true});};
  async function calibration(){try{const r=await fetch('./api/dac-measurements',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const data=await r.json();el('calibration-history').textContent=`${data.points.length} relevé(s) historique(s) · `+(data.fit?`gain proposé ${fmt(data.fit.gain)}, décalage ${fmt(data.fit.offset_ma)} mA (non appliqué)`:'aucune correction calculée');}catch(e){el('calibration-history').textContent='Relevés historiques indisponibles : '+e;}}
  calibration();

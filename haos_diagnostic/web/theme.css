@@ -32,10 +32,40 @@ body:has(#page-monitor){max-width:1000px;padding-bottom:35px}.value,.big,.status
 .energy-page p{overflow-wrap:anywhere}
 
 #output-panel input[type=range]{width:100%;min-height:44px} #output-panel input[type=number],#output-panel select{max-width:100%;min-height:44px} #output-panel label{display:block;margin:12px 0} #output-panel [hidden]{display:none} .measurement-scroll{overflow-x:auto} #output-panel td,#output-panel th{padding:6px;text-align:left} #output-error{color:var(--danger,#c43c36)}
+#output-mode[data-mode="AUTO"]{background:#b42318;color:#fff;border-color:#8f1c13;font-weight:800}
 #boiler-frame{display:block;width:100%;min-height:300px;border:0;overflow:hidden}
 html.embedded .head,html.embedded .bottom{display:none}
 html.embedded .app{padding:0;max-width:none}
-.heartbeat-light { display: inline-block; width: .7rem; height: .7rem; margin-left: .4rem; border-radius: 50%; background: #777; }
-.heartbeat-light.pulse { background: #2ca34a; box-shadow: 0 0 .5rem #2ca34a; }
-#output-stop { background: #b42318; color: #fff; border: 2px solid #8f1c13; font-weight: 800; min-width: 120px; }
-#output-stop:hover { background: #8f1c13; border-color: #6f140e; }
+.heartbeat-light { display: inline-block; width: 2rem; height: 2rem; margin-left: .4rem; vertical-align: middle; }
+.heartbeat-light svg { width: 100%; height: 100%; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.heartbeat-light .heart-shape { stroke: var(--icon-navy); stroke-width: 1.5; }
+.heartbeat-light .heart-ecg { stroke: var(--icon-red); stroke-width: 1.6; }
+.heartbeat-light.pulse .heart-shape { fill: #e02447; stroke: #e02447; }
+.heartbeat-light.pulse .heart-ecg { stroke: white; }
+
+/* B3: live summary and direct access to pilotage on all viewports. */
+.b3-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0}
+.b3-summary .kpi span{display:block;color:var(--muted-ui);font-size:12px}
+#pilotage{margin:12px 0} #sorties{margin:12px 0}
+@media(max-width:600px){.b3-summary{grid-template-columns:1fr;gap:6px}.b3-summary .kpi{padding:8px 12px}.b3-summary .kpi strong{margin-top:2px}}
+
+:root{--icon-navy:#084778;--icon-blue:#1372c7;--icon-green:#239954;--icon-orange:#f39c12;--icon-red:#e84437}
+:root[data-theme="dark"]{--icon-navy:#acd7fb;--icon-blue:#70c1ff;--icon-green:#6fdf8a;--icon-orange:#ffc45a;--icon-red:#ff7668}
+.b3-icon{width:26px;height:26px;flex:none;stroke:var(--icon-navy);color:var(--icon-navy);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle}
+.b3-icon .green-stroke{stroke:var(--icon-green)} .b3-icon .orange-stroke{stroke:var(--icon-orange)} .b3-icon .red-stroke{stroke:var(--icon-red)} .b3-icon .blue-stroke{stroke:var(--icon-blue)}
+.b3-icon .blue-fill{fill:var(--icon-blue);stroke:var(--icon-blue)} .b3-icon .red-fill{fill:var(--icon-red);stroke:var(--icon-red)} .b3-icon .icon-bg{fill:var(--panel-bg)} .b3-icon text{fill:var(--icon-navy)}
+.b3-summary .b3-icon{float:left;margin:3px 12px 2px 0}
+
+.b3-top{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);align-items:start;gap:12px}
+.b3-top #pilotage,.b3-top #sorties{margin:0}
+html.embedded .boiler-page{display:flex;flex-direction:column}
+html.embedded #output-panel{order:-1}
+html.embedded .boiler-status{display:block;padding:8px 0}
+html.embedded .boiler-status>span{display:none}
+@media(max-width:1000px){.b3-top{grid-template-columns:1fr}}
+
+.mode-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.mode-switch button{min-width:0;font-weight:800;min-height:44px}.mode-switch button[aria-pressed="true"]{background:var(--accent-ui);color:var(--accent-ink);border-color:var(--accent-ui)}.mode-switch .stop-mode,.mode-switch .stop-mode[aria-pressed="true"]{color:#fff;background:#b42318;border-color:#8f1c13}.mode-native{position:absolute;width:1px;height:1px;min-height:0!important;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.mode-heading{font-weight:700;margin:12px 0 6px}
+
+.b3-bottom{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;align-items:start;margin-top:12px}.b3-bottom .overview{display:block}.b3-bottom #profil{min-width:0}.b3-bottom #page-inputs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.b3-bottom .card{margin:0}
+@media(max-width:1000px){.b3-bottom{grid-template-columns:1fr}}
+@media(max-width:600px){.b3-bottom #page-inputs{display:block}.b3-bottom .card{margin-bottom:8px}}
