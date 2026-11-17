@@ -1189,6 +1189,27 @@ class Diagnostic:
                             'width_s': self.options['heartbeat_width_s']})
         return True
 
+    def autostart_idle_heartbeat(self):
+        """Arm the configured watchdog even without a saved AUTO request.
+
+        The AUTO restoration path owns its own safe-zero/watchdog sequence.
+        This path prepares the DAC at zero but never selects a heating mode.
+        A failed initialization stays stopped and must not retry on its own.
+        """
+        if not self.options['heartbeat_autostart'] or self.startup_auto_pending:
+            return False
+        if self.dac_fault_latched:
+            LOG.error('Démarrage heartbeat refusé : défaut DAC mémorisé')
+            return False
+        try:
+            started = self.autostart_heartbeat()
+        except (OSError, ValueError) as exc:
+            LOG.error('Démarrage heartbeat refusé : %s', exc)
+            return False
+        if started:
+            LOG.info('Heartbeat armé hors reprise AUTO ; aucune commande de chauffe rétablie')
+        return started
+
     def _set_heartbeat(self, command):
         if not isinstance(command, dict):
             raise ValueError('Expected heartbeat command')
@@ -1370,7 +1391,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.22",
+            "version": "1.0.0-alpha.23",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1716,7 +1737,7 @@ def handler_factory(diag: Diagnostic):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    LOG.info("Démarrage Surplus PV : AUTO demandé, vérification des conditions")
+    LOG.info("Démarrage Surplus PV : restauration des modes sous conditions")
     config_file = Path(os.environ.get("SPV_OPTIONS_FILE", "/data/options.json"))
     options = json.loads(config_file.read_text(encoding="utf-8"))
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN") or ""
@@ -1770,6 +1791,9 @@ def main():
             stop.wait(diag.options['pv_actual_sample_seconds'])
     pv_worker = Thread(target=pv_loop, daemon=True)
     pv_worker.start()
+    # The watchdog autostart setting also applies to ARRET / no saved mode.
+    # The AUTO restore path starts it separately after its safe-zero checks.
+    diag.autostart_idle_heartbeat()
     server = ThreadingHTTPServer(("0.0.0.0", 8099), handler_factory(diag))
     try:
         server.serve_forever(poll_interval=0.5)

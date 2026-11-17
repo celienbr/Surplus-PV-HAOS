@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.22
+# Surplus PV — Home Assistant OS 1.0.0-alpha.23
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.21
+## Mise à jour depuis alpha.22
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.22, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.23, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Le tableau de bord indique six diagnostics indépendants. Une sonde manquante
@@ -49,6 +49,9 @@ et la durée d'impulsion sont nulles par défaut : les renseigner avec les valeu
 établies sur l'installation. Le timeout est au moins deux fois l'intervalle
 d'échantillonnage. L'impulsion doit durer au moins 50 ms et le repos au moins
 100 ms. La coordination avec le temporisateur physique doit être vérifiée séparément.
+Si cette option est activée, le heartbeat démarre aussi lorsque le dernier mode
+est ARRÊT ou MANUEL. Les impulsions peuvent modifier l'état du watchdog Omron et
+des relais associés ; leur effet physique n'est pas mesuré par l'application.
 Une configuration incomplète empêche
 le démarrage automatique et produit une erreur dans le journal. Aucun ancien
 ordre de chauffe n'est repris au démarrage. Le dernier mode explicitement choisi
@@ -72,6 +75,14 @@ quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Les réglages MANUEL mémorisés ne sont pas réappliqués au démarrage.
 
 ## Retour arrière
+
+Pour revenir d'Alpha.23 à Alpha.22, arrêter l'application et sauvegarder `/data`
+et toutes les données récentes, y compris SQLite et ses fichiers WAL/SHM, avec
+une copie hors Pi. Restaurer la version Alpha.22 de la même application sans
+désinstallation. Les préférences conservent le même format ; une restauration HA
+peut remplacer les données récentes, à préserver et réconcilier séparément.
+Vérifier les réglages et l'historique avant la remise en route. Ce retour arrière
+n'a pas été exécuté sur une installation réelle.
 
 Pour revenir d'Alpha.22 à Alpha.21, arrêter l'application et sauvegarder tout
 `/data`, y compris SQLite et les fichiers WAL/SHM, dans une copie hors du Pi.

@@ -1,3 +1,7 @@
+# 1.0.0-alpha.23 — candidat en validation
+
+Démarrage du heartbeat configuré sans mode AUTO mémorisé, après préparation DAC à zéro. Aucun ancien ordre de chauffe n'est restauré par cette opération. Contrôles sur doubles ; validation matérielle et publication en attente.
+
 # 1.0.0-alpha.21 — candidat en validation
 
 Diagnostics A001–A006, hypothèse de confort à 35 °C sans autorisation de chauffe, et correction de la chaîne logicielle DAC/heartbeat. Validation matérielle non effectuée.
