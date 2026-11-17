@@ -32,6 +32,7 @@ from .dac_calibration import CalibrationStore
 from .measurements import Measurement
 from .boiler_temperature import valid_boiler_temperature
 from .heartbeat import HeartbeatService
+from .alarms import Alarms
 from .power_curve import PowerCurve
 from .gpio_v2 import GPIOOutput
 from .async_ha import AsyncControlInputs
@@ -289,6 +290,7 @@ class Diagnostic:
             except (TypeError, ValueError) as exc:
                 raise ValueError('Courbe puissance/courant invalide : ' + str(exc)) from exc
         self.heartbeat = HeartbeatService()
+        self.alarms = Alarms()
         self.startup_lock = Lock()
         self.startup_auto_pending = False
         self.startup_reason = None
@@ -318,6 +320,7 @@ class Diagnostic:
         self.control_last_sample_ns = None
         self.comfort = {"status": "WAITING", "reason": "En attente de mesures valides.",
                         "backup_power_w": 0}
+        self.comfort_estimate = None
         self.water_temperature_c = None
         self.temperature_source = ("HOME_ASSISTANT" if self.options["boiler_temperature_entity"]
                                    else "UNCONFIGURED")
@@ -332,6 +335,7 @@ class Diagnostic:
         self._last_logged_status = None
         self._last_comfort_label = None
         self._last_heartbeat = None
+        self._last_alarm_states = {}
         self._last_forecast_archived_at = None
         self.regulator = SurplusRegulator(Parameters(
             max_power_w=self.options["max_power_w"],
@@ -380,6 +384,9 @@ class Diagnostic:
         new_sample = False
         timing = None
         grid_generation = None
+        temperature_invalid = False
+        failure_stage = 'meter'
+        calculation_failed = False
         with self.lock:
             self.auto_applied = None
             if generation != self._control_generation:
@@ -462,7 +469,10 @@ class Diagnostic:
                     'coverage': measurement_coverage, 'reason': measurement_reason,
                     'freshness_report': freshness_report,
                 }
+                self.alarms.observe('A004', 'OK' if communication_healthy and measurement_coverage == 'TWO_RECENT' else 'DEFAUT', now)
 
+                temperature_invalid = True
+                failure_stage = 'thermal'
                 entity = self.options["boiler_temperature_entity"]
                 if not entity:
                     raise ValueError('Sonde réelle du boiler non configurée')
@@ -488,6 +498,9 @@ class Diagnostic:
                     if not valid_boiler_temperature(temperature, now, self.options["boiler_temperature_max_age_seconds"]):
                         raise ValueError(f"Boiler temperature invalid or stale (age={age_s:.1f} s; value={temperature.value} °C)")
                     water_c = temperature.value
+                temperature_invalid = False
+                self.alarms.observe('A003', 'OK', now)
+                failure_stage = 'calculation'
                 # Recheck meter freshness after any slow temperature request.
                 if freshness_report is None or not -2 <= (now-freshness_report).total_seconds() <= self.options["max_age_seconds"]:
                     raise ValueError("Meter report stale after acquisition")
@@ -514,6 +527,7 @@ class Diagnostic:
                               'interval_since_previous_ms': interval_ms}
                     timing['calculation_start_ns'] = time.monotonic_ns()
                 self.water_temperature_c = water_c
+                self.comfort_estimate = None
                 self.comfort = plan_comfort(self.options, now, water_c, self.profile)
                 self.comfort["temperature_source"] = self.temperature_source
                 # Regulate only when real AUTO is selected. The meter already
@@ -561,6 +575,7 @@ class Diagnostic:
                 self._last_meter_report = meter_report
                 self._last_meter_reports = meter_reports
                 self.comfort["gate_state"] = decision.state
+                self.alarms.observe('A001', 'OK', now)
                 self.comfort["applied_boiler_w"] = round(decision.command_w)
                 self.latest = {
                     "status": measurement_status,
@@ -579,11 +594,33 @@ class Diagnostic:
                         "time": now.strftime("%H:%M:%S"),
                         "meter_w": round(meter_w),
                     })
-            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+            except Exception as exc:
+                if failure_stage == 'meter':
+                    self.alarms.observe('A004', 'DEFAUT', now)
+                    self.alarms.observe('A001', 'NON_VERIFIABLE', now)
+                elif failure_stage == 'thermal':
+                    self.alarms.observe('A003', 'DEFAUT', now)
+                    self.alarms.observe('A001', 'NON_VERIFIABLE', now)
+                elif failure_stage == 'calculation':
+                    LOG.exception('Échec du calcul de régulation ; repli borné ou inhibition')
+                    self.alarms.observe('A001', 'DEFAUT', now)
+                    calculation_failed = True
                 if not injected_clock:
                     now = datetime.now(timezone.utc)
                 self.regulator.invalid_data(str(exc))
                 self.water_temperature_c = None
+                self.comfort_estimate = None
+                if temperature_invalid or self.boiler_temperature_diagnostic.get('status') != 'FRESH':
+                    try:
+                        estimate = plan_comfort(self.options, now, 35.0, self.profile)
+                        self.comfort_estimate = {
+                            'assumed_temperature_c': 35.0,
+                            'temperature_source': 'HYPOTHESIS_NOT_A_MEASUREMENT',
+                            'reason': 'Estimation seule : sonde indisponible ; chauffe non autorisée par cette hypothèse.',
+                            'plan': estimate,
+                        }
+                    except (ValueError, TypeError, KeyError, RuntimeError, ArithmeticError):
+                        LOG.warning('Estimation de confort indisponible')
                 report = meter_observation['freshness_report'] if meter_observation else None
                 meter_age = (now-report).total_seconds() if report is not None else None
                 meter_fresh = (meter_age is not None and -2 <= meter_age <= self.options['max_age_seconds'])
@@ -608,6 +645,10 @@ class Diagnostic:
                 observation_i2c = None
                 if timing is not None:
                     timing['setpoint_ready_ns'] = time.monotonic_ns()
+                if self.output.inhibit_unready_dac():
+                    self._report_auto_output_failure('main', 'AUTO_REEL')
+                    self.latest['control_state'] = 'FAULT'
+                    self.comfort['gate_state'] = 'FAULT'
                 auto_healthy = self.latest['control_state'] in ('AUTO_READY', 'COMFORT_BACKUP', 'THERMAL_LIMIT')
                 if self.output.snapshot()['mode'] == 'AUTO_REEL':
                     hb = self.heartbeat.snapshot()
@@ -630,12 +671,42 @@ class Diagnostic:
                     observation_i2c = self.output.observe_auto(
                         decision.command_w if self.latest['control_state'] != 'FAULT' else 0,
                         generation, auto_healthy, new_sample=new_sample, now=now)
-            except (OSError, ValueError) as exc:
+            except Exception as exc:
                 observation_i2c = getattr(exc, 'i2c_timing', None)
                 LOG.error('Défaut de commande AUTO du DAC ; état physique inconnu')
                 self.latest['control_state'] = 'FAULT'
                 self.comfort['gate_state'] = 'FAULT'
+                # A failed automatic output cannot support a controlled heat
+                # command. Latch the watchdog fault even during a pulse; a
+                # later successful sensor poll must not silently rearm it.
+                if isinstance(exc, OSError):
+                    self._report_auto_output_failure('main', self.output.snapshot()['mode'])
+                elif self.output.snapshot()['mode'] == 'AUTO_REEL':
+                    LOG.exception('Commande AUTO invalide ; heartbeat bloqué')
+                    self.alarms.observe('A001', 'DEFAUT', now)
+                    self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
+            if calculation_failed and self.output.snapshot()['mode'] == 'AUTO_REEL':
+                try:
+                    hb = self.heartbeat.snapshot()
+                    if hb['state'] != 'NORMAL' or hb['driver'] != 'GPIO_REEL':
+                        raise ValueError('Heartbeat non confirmé')
+                    self.output.confirm_fallback_zero(now)
+                    self.comfort['fallback'] = 'ZERO_CONFIRMED_NO_COMFORT_GUARANTEE'
+                except OSError:
+                    self._report_auto_output_failure('main', 'AUTO_REEL')
+                except Exception:
+                    LOG.exception('Repli zéro impossible ; heartbeat bloqué')
+                    self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
             output = self.output.snapshot()
+            if output['error'] or output['dac'].get('communication') == 'FAULT':
+                self.alarms.observe('A002', 'DEFAUT', now)
+            elif output['mode'] in ('AUTO_REEL', 'MANUEL_REEL') and output['dac']['ready']:
+                i2c = output.get('last_i2c') or {}
+                ack_age = (time.monotonic_ns() - i2c.get('end_ns', 0)) / 1e9
+                self.alarms.observe('A002', 'OK' if i2c.get('result') == 'ACK' and
+                                    0 <= ack_age <= self.options['max_age_seconds'] else 'NON_VERIFIABLE', now)
+            elif output['mode'] not in ('AUTO_REEL', 'MANUEL_REEL') and not output['error']:
+                self.alarms.observe('A002', 'DESACTIVE', now)
             if timing is not None:
                 timing['i2c'] = observation_i2c
                 timing['outcome'] = ('ERROR' if self.latest['control_state'] == 'FAULT' else
@@ -653,7 +724,7 @@ class Diagnostic:
             # observe_auto; MANUEL does not depend on the grid meter at all.
             # The thermal and guard tasks report progress independently; a
             # blocked poll cannot refresh this timestamp.
-            self.heartbeat.progress('main')
+            self._heartbeat_capability('main', self.output.snapshot()['mode'])
             result = self.snapshot()
         if self.history_store is not None and self.record_queue is not None:
             try:
@@ -676,6 +747,11 @@ class Diagnostic:
                 else:
                     LOG.warning('Mesure ou régulation indisponible : %s', result['error'])
                 self.history_store.record(now, result)
+                for alarm in result.get('application_health', {}).get('alarms', []):
+                    if self._last_alarm_states.get(alarm['id']) != (alarm['state'], alarm['at']):
+                        self.history_store.log(now, 'WARNING' if alarm['state'] == 'DEFAUT' else 'INFO',
+                                               'ALARM', f"{alarm['id']} {alarm['state']}: {alarm['description']}")
+                        self._last_alarm_states[alarm['id']] = (alarm['state'], alarm['at'])
                 comfort_label = (result["comfort"].get("status"),
                                  result["comfort"].get("deadline"))
                 if comfort_label != self._last_comfort_label:
@@ -729,6 +805,21 @@ class Diagnostic:
         self.record_worker.join(timeout)
         return not self.record_worker.is_alive()
 
+    def _heartbeat_capability(self, task, mode, blocked=False):
+        """Report task progress or latch a blocking AUTO control failure.
+
+        Sensor faults are not passed as blocked; the arbiter retains its
+        thermal, metering, permission and zero-output gates. Independently,
+        HeartbeatService detects missed critical-task progress and GPIO faults.
+        """
+        self.heartbeat.progress(task, healthy=not (mode == 'AUTO_REEL' and blocked))
+
+    def _report_auto_output_failure(self, task, mode):
+        """A failed automatic DAC write latches the shared watchdog fault."""
+        if mode == 'AUTO_REEL':
+            self.alarms.observe('A002', 'DEFAUT')
+            self._heartbeat_capability(task, mode, blocked=True)
+
     def refresh_control_temperature_once(self, now=None):
         injected = now is not None
         now = now or datetime.now(timezone.utc)
@@ -779,6 +870,8 @@ class Diagnostic:
         else:
             status = 'FRESH'
             reason = 'Recent HA report; physical conversion not proven'
+        relevant = bool(entity) or self.output.snapshot()['mode'] in ('AUTO_REEL', 'MANUEL_REEL')
+        self.alarms.observe('A003', 'DESACTIVE' if not relevant else 'OK' if status == 'FRESH' else 'DEFAUT', now)
         self.boiler_temperature_diagnostic = {
             'entity': entity or None, 'status': status, 'reason': reason,
             'source': ('HA_TEMPLATE_LIVE_LAST_REPORTED' if entity and self.client is not None
@@ -803,20 +896,31 @@ class Diagnostic:
                 self.boiler_temperature_diagnostic['report_at'],
                 self._boiler_refresh_result, reason)
             self._last_thermal_log_status = status
+        output_mode = self.output.snapshot()['mode']
         try:
             self.output.observe_temperature(measurement, self.options['boiler_max_temp_c'],
                                             self.options['boiler_temperature_max_age_seconds'], now)
         except OSError:
             LOG.error('DAC thermal stop failed; physical output unknown')
-        self.heartbeat.progress('thermal')
+            self._report_auto_output_failure('thermal', output_mode)
+        self._heartbeat_capability('thermal', self.output.snapshot()['mode'])
 
     def set_output(self, values):
         # Serialize operator selection with the startup arming sequence. An
         # explicit stop or mode selection always cancels pending startup.
         with self.startup_lock:
-            self._set_output(values)
+            previous_mode = self.output.snapshot()['mode']
+            try:
+                self._set_output(values)
+            except OSError:
+                self.alarms.observe('A002', 'DEFAUT')
+                requested_auto = isinstance(values, dict) and values.get('mode') == 'AUTO_REEL'
+                if requested_auto or previous_mode == 'AUTO_REEL':
+                    self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
+                raise
             if values.get('action') in ('stop', 'mode', 'recover'):
                 self.startup_auto_pending = False
+                self.startup_reason = None
 
     def set_user_preferences(self, changes):
         """Validate and persist preferences without issuing an output command."""
@@ -901,8 +1005,11 @@ class Diagnostic:
                 try:
                     self.output.prepare_heartbeat()
                 except OSError as exc:
+                    self.alarms.observe('A002', 'DEFAUT')
                     self.startup_reason = 'AUTO inhibé : initialisation DAC impossible : ' + str(exc)[:120]
+                    self.startup_auto_pending = False
                     return
+                self.alarms.observe('A002', 'OK')
                 self.startup_zeroed = True
                 self.startup_next_attempt = 0.0
             hb = self.heartbeat.snapshot()
@@ -970,6 +1077,8 @@ class Diagnostic:
                           auto_physical_enabled=False, startup_pending=True)
         else:
             status['startup_pending'] = False
+            if self.startup_reason:
+                status['reason'] = self.startup_reason
         return status
 
     def set_heartbeat(self, command):
@@ -1007,7 +1116,12 @@ class Diagnostic:
                 raise ValueError('Impulsion GPIO >= 0,05 s et repos >= 0,1 s requis')
             if timeout < 2 * self.options['sample_seconds']:
                 raise ValueError('Le délai watchdog doit couvrir deux périodes de régulation')
-            self.output.prepare_heartbeat()
+            try:
+                self.output.prepare_heartbeat()
+            except OSError:
+                self.alarms.observe('A002', 'DEFAUT')
+                raise
+            self.alarms.observe('A002', 'OK')
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
             raise ValueError('Unknown heartbeat output')
@@ -1017,12 +1131,22 @@ class Diagnostic:
                              timeout=self.options['heartbeat_task_timeout_s'])
 
     def guard_output_once(self):
-        self.output.check_freshness()
-        self.heartbeat.progress('guard')
+        output_mode = self.output.snapshot()['mode']
+        try:
+            self.output.check_freshness()
+        except OSError:
+            self._report_auto_output_failure('guard', output_mode)
+            raise
+        if self.output.inhibit_unready_dac():
+            self._report_auto_output_failure('guard', 'AUTO_REEL')
+        self._heartbeat_capability('guard', self.output.snapshot()['mode'])
         with self.startup_lock:
             state = self.output.snapshot()
+            if state['mode'] == 'AUTO_REEL' and state['error']:
+                self._report_auto_output_failure('guard', state['mode'])
             if (not self.startup_auto_pending and state['mode'] == 'AUTO_REEL'
-                    and state['error'] and not state['dac']['ready']):
+                    and state['error'] and not state['dac']['ready']
+                    and self.heartbeat.snapshot()['state'] != 'DEFAUT'):
                 self.startup_auto_pending = True
                 self.startup_reason = 'AUTO inhibé : réinitialisation du DAC à zéro en attente'
                 self.startup_zeroed = False
@@ -1075,6 +1199,27 @@ class Diagnostic:
                 return self.profile
             self.profile = profile
             self.predictive = predictive
+        weather_needed = options['weather_enabled'] or options['pac_enabled']
+        solar_needed = options['weather_enabled'] or options['predictive_target_enabled']
+        meteo = profile.get('meteo_status')
+        solar = profile.get('solar_status')
+        daily = profile.get('daily_pv_status')
+        solar_valid = solar in ('OK', 'PARTIAL') or daily == 'OK'
+        if options['predictive_target_enabled']:
+            # Test the forecast independently of a missing real probe. This
+            # calculation diagnoses coverage only and cannot command heat.
+            try:
+                coverage = predictive_target(profile, 35.0, options['weather_min_c'],
+                    options['boiler_max_temp_c'], options['weather_volume_l'], now, True)
+                solar_valid = coverage.get('status') == 'OK'
+            except (ValueError, TypeError, KeyError):
+                solar_valid = False
+        self.alarms.observe('A005', 'DESACTIVE' if not weather_needed else
+                            'OK' if meteo == 'OK' else
+                            'NON_VERIFIABLE' if meteo in (None, 'WAITING', 'PARTIAL') else 'DEFAUT', now)
+        self.alarms.observe('A006', 'DESACTIVE' if not solar_needed else
+                            'OK' if solar_valid else
+                            'NON_VERIFIABLE' if solar in (None, 'WAITING') else 'DEFAUT', now)
         if self.history_store is not None:
             try:
                 # Archive at most one as-issued forecast per hour.
@@ -1121,13 +1266,14 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.20",
+            "version": "1.0.0-alpha.21",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
             "water_temperature_c": self.water_temperature_c,
             "boiler_temperature_diagnostic": dict(self.boiler_temperature_diagnostic),
             "comfort": dict(self.comfort),
+            "comfort_estimate": self.comfort_estimate,
             "predictive": dict(self.predictive),
             "auto_target": (resolve_auto_target(self.options, self.weather, self.predictive, datetime.now(timezone.utc))
                             if self.options['boiler_ceiling_configured'] else None),
@@ -1136,6 +1282,7 @@ class Diagnostic:
             "physical_outputs": "GP8600_COMMANDE_NON_VERIFIEE",
             "output_control": self.output_status(),
             "heartbeat": self.heartbeat.snapshot(),
+            "application_health": self.alarms.snapshot(),
             "options": dict(self.options),
             **self.latest,
             "history": list(self.history),
@@ -1177,7 +1324,11 @@ def handler_factory(diag: Diagnostic):
                         snapshot = diag.heartbeat.snapshot()
                         for event in events:
                             payload = json.dumps({'pulse': event, 'missed': missed,
-                                                  'state': snapshot['state']}, allow_nan=False)
+                                                  'state': snapshot['state'],
+                                                  'period_s': snapshot.get('period_s'),
+                                                  'width_s': snapshot.get('width_s'),
+                                                  'pulse_age_s': snapshot.get('last_pulse_age_s')
+                                                  if event['at'] == snapshot.get('last_pulse_at') else None}, allow_nan=False)
                             self.wfile.write(('event: pulse\ndata: ' + payload + '\n\n').encode())
                             cursor = event['sequence']
                         payload = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)

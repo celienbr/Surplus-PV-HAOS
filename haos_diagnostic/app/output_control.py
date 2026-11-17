@@ -35,11 +35,14 @@ class OutputControl:
         self.i2c_avoided = 0
 
     def _initialize(self):
+        start = monotonic_ns()
         try:
             self.dac.initialize()
             self.error = None
+            self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ACK'}
         except OSError as exc:
             self.error = str(exc)[:160]
+            self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ERROR'}
             self.reason = "I²C indisponible ; sortie physique inconnue"
 
     def _clear(self, reason):
@@ -98,6 +101,15 @@ class OutputControl:
                 self._stop("Température périmée ; retour ARRÊT")
             elif self.mode == "AUTO_REEL" and self.auto_deadline is not None and monotonic() > self.auto_deadline:
                 self._suspend_auto("Chauffe suspendue : calcul AUTO périmé")
+
+    def inhibit_unready_dac(self):
+        """Fail closed when AUTO loses the initialized DAC without an ioctl."""
+        with self.lock:
+            if self.mode != 'AUTO_REEL' or self.dac.ready:
+                return False
+            self._suspend_auto('DAC non prêt ; sortie physique inconnue')
+            self.error = 'DAC non prêt ; commande AUTO inhibée'
+            return True
 
     def _suspend_auto(self, reason):
         if not self.auto_suspended:
@@ -232,6 +244,23 @@ class OutputControl:
                 self.enabled = power_w > 0
                 self.auto_deadline = monotonic() + self.auto_timeout
                 return dict(self.last_i2c) if sent else None
+
+    def confirm_fallback_zero(self, now=None):
+        """Confirm a bounded zero request after a failed AUTO calculation.
+
+        This is a software/I²C acknowledgement, not proof of output current.
+        It never permits heat or changes mode and retains the thermal gate.
+        """
+        with self.lock:
+            if self.mode != 'AUTO_REEL' or not self.dac.ready or not self._temperature_ok(now or datetime.now(timezone.utc)):
+                raise ValueError('Repli zéro non vérifiable')
+            already_suspended = self.auto_suspended
+            self._suspend_auto('Calcul indisponible : repli à zéro, confort non garanti')
+            if already_suspended:
+                self._write(0)
+            if self.enabled or self.requested_ma != 0 or self.auto_power_w != 0:
+                raise ValueError('Repli zéro incohérent')
+            self.reason = 'Calcul indisponible : repli à zéro, confort non garanti'
 
     def snapshot(self):
         with self.lock:

@@ -111,6 +111,7 @@ class HeartbeatService:
         self.lock = RLock()
         self.pulse_changed = Condition(self.lock)
         self.pulse_sequence = 0
+        self.state_sequence = 0
         self.pulse_events = deque(maxlen=256)
         self.heartbeat = None
         self.pending_fault = None
@@ -123,22 +124,31 @@ class HeartbeatService:
             heartbeat = Heartbeat(output, required, **timing)
             heartbeat.arm()
             self.heartbeat = heartbeat
+            self.state_sequence += 1
+            self.pulse_changed.notify_all()
             self.pending_fault = None
             self.pending_stop = False
 
     def progress(self, task, healthy=True):
         # A blocked GPIO ioctl must not stall the temperature or control loop.
+        if not healthy:
+            # Latch first; the scheduler owns GPIO close, which may block.
+            # Readers see pending_fault as DEFAUT before that close completes.
+            self.pending_fault = 'Défaut tâche critique : ' + task
+            if self.lock.acquire(blocking=False):
+                try:
+                    self.state_sequence += 1
+                    self.pulse_changed.notify_all()
+                finally:
+                    self.lock.release()
+            return
         if not self.lock.acquire(blocking=False):
-            if not healthy:
-                self.pending_fault = 'Défaut tâche critique : ' + task
             return
         try:
             hb = self.heartbeat
             if hb is None or hb.state in ('ARRET', 'DEFAUT'):
                 return
-            if not healthy:
-                hb.fault('Défaut tâche critique : ' + task)
-            elif task in hb.tasks:
+            if task in hb.tasks:
                 hb.progress(task)
         finally:
             self.lock.release()
@@ -146,6 +156,7 @@ class HeartbeatService:
     def tick(self):
         with self.lock:
             if self.heartbeat is not None:
+                previous_state = self.heartbeat.state
                 if self.pending_fault is not None:
                     reason, self.pending_fault = self.pending_fault, None
                     if self.heartbeat.state not in ('ARRET', 'DEFAUT'):
@@ -165,11 +176,15 @@ class HeartbeatService:
                         self.pulse_events.append({'sequence': self.pulse_sequence,
                                                   'at': self.heartbeat.last_pulse_at})
                         self.pulse_changed.notify_all()
+                if self.heartbeat.state != previous_state:
+                    self.state_sequence += 1
+                    self.pulse_changed.notify_all()
 
     def wait_for_pulses(self, after, timeout=1):
         """Return generated pulses after a cursor; never fabricate old events."""
         with self.pulse_changed:
-            self.pulse_changed.wait_for(lambda: self.pulse_sequence > after, timeout=timeout)
+            state_sequence = self.state_sequence
+            self.pulse_changed.wait_for(lambda: self.pulse_sequence > after or self.state_sequence != state_sequence, timeout=timeout)
             events = [event.copy() for event in self.pulse_events if event['sequence'] > after]
             missed = bool(events and events[0]['sequence'] > after + 1)
             return events, missed
@@ -184,6 +199,8 @@ class HeartbeatService:
                 self.heartbeat.stop()
                 self.pending_fault = None
                 self.pending_stop = False
+                self.state_sequence += 1
+                self.pulse_changed.notify_all()
 
     def stop_for_mode_change(self):
         # Neither a held lock nor a blocking GPIO close may delay MANUEL.

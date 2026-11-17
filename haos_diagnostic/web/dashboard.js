@@ -14,6 +14,7 @@ function tag(id,state,label){
 }
 function render(p){
  currentData=p;
+ renderApplicationHealth(p);
  const o=p.options||{},w=p.weather||{},s=p.sensors||{},prof=p.profile||{};
  const output=p.output_control||{};
  const measuredAt=Date.parse(output.temperature_at||'');
@@ -94,6 +95,35 @@ function render(p){
   " · "+p.version);
 }
 
+function renderApplicationHealth(p){
+ const health=p.application_health||{}, rows=health.alarms||[], heartbeat=p.heartbeat||{};
+ const labels={OK:'OK',DEFAUT:'DÉFAUT',NON_VERIFIABLE:'Non vérifiable',DESACTIVE:'Désactivé'};
+ text('application-health-state',health.state==='ALARME'?'ALARME':health.state==='OK'?'OK':'Non vérifiable');
+ const globalBadge=$('application-health-state'), healthPanel=$('application-health');
+ if(globalBadge)globalBadge.dataset.state=health.state||'NON_VERIFIABLE';
+ if(healthPanel)healthPanel.dataset.state=health.state||'NON_VERIFIABLE';
+ text('application-health-mode',heartbeat.state==='DEFAUT' ?
+  'Heartbeat en défaut · commande non confirmée.' :
+  health.state==='ALARME' ? 'Diagnostics dégradés · voir l’indicateur de heartbeat ci-dessous.' :
+  health.state==='OK' ? 'Diagnostics normaux · voir l’indicateur de heartbeat ci-dessous.' :
+  'Voir l’indicateur de heartbeat ci-dessous pour la fraîcheur des impulsions.');
+ const estimate=p.comfort_estimate;
+ text('application-health-estimate',estimate?'Estimation du besoin avec hypothèse 35 °C ; ce n’est pas une mesure et elle n’autorise pas la chauffe.':'');
+ const container=$('application-alarms'); if(!container)return;
+ container.replaceChildren();
+ for(const alarm of rows){
+  const item=document.createElement('article');item.className='application-alarm';
+  const identifier=document.createElement('span');identifier.className='application-alarm-id';identifier.textContent=alarm.id;
+  const name=document.createElement('strong');name.textContent=alarm.name;
+  const state=document.createElement('span');state.className='application-badge';state.dataset.state=alarm.state;state.textContent=labels[alarm.state]||'Non vérifiable';
+  const description=document.createElement('p');description.textContent=alarm.description;
+  const when=document.createElement('time');
+  if(alarm.at){const stamp=new Date(alarm.at);when.textContent=Number.isNaN(stamp.valueOf())?alarm.at:stamp.toLocaleString('fr-CH');when.dateTime=alarm.at;}
+  else when.textContent='Aucun diagnostic daté';
+  item.append(identifier,name,state,description,when);container.append(item);
+ }
+}
+
 function renderCalculation(p){
  const o=p.options||{},w=p.weather||{},prof=p.profile||{};
  text('calc-pv',kwh(w.gross_tomorrow_kwh??prof.daily_tomorrow_kwh));
@@ -138,6 +168,8 @@ async function update(){
  if(!response.ok)throw Error('HTTP '+response.status);render(await response.json());
  document.body.classList.remove('disconnected');
  }catch(error){document.body.classList.add('disconnected');text('poll-text','Connexion perdue · valeurs précédentes périmées');
+ renderApplicationHealth({application_health:{state:'NON_VERIFIABLE',alarms:(currentData?.application_health?.alarms||[]).map(a=>({...a,state:'NON_VERIFIABLE'}))}});
+ text('application-health-mode','Connexion perdue · état actuel non confirmé.');
  tag('grid-tag','bad','Données périmées');text('calc-protection','État inconnu');
  text('fallback-grid','Communication interface perdue · état non confirmé');
  tag('comfort-status','bad','Plan périmé');text('comfort-reason','Communication perdue : le plan affiché ne confirme pas l’état actuel.');

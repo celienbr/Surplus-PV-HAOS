@@ -1,3 +1,7 @@
+# 1.0.0-alpha.21 — candidat en validation
+
+Diagnostics A001–A006, hypothèse de confort à 35 °C sans autorisation de chauffe, et correction de la chaîne logicielle DAC/heartbeat. Validation matérielle non effectuée.
+
 # 1.0.0-alpha.20 — candidat en validation
 
 Correction des prévisions PV partielles et interface Boiler en revue ; non publié.

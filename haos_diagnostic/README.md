@@ -1,18 +1,24 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.20
+# Surplus PV — Home Assistant OS 1.0.0-alpha.21
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.19
+## Mise à jour depuis alpha.20
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.20, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.21, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
+
+Le tableau de bord indique six diagnostics indépendants. Une sonde manquante
+peut produire une estimation de confort basée sur 35 °C : ce n'est jamais une
+mesure et elle n'autorise pas la chauffe. Si le calcul AUTO échoue, un repli à
+zéro ne garantit pas le confort. Un défaut DAC en AUTO bloque le heartbeat et
+requiert une reprise explicite. Un accusé I²C ne mesure pas le courant réel.
 
 Dans Pilotage, la consigne AUTO utilisateur est bornée par le plafond
 `boiler_max_temp_c` des options Supervisor. Le choix Prévision réutilise le
@@ -65,10 +71,10 @@ inhibée. Les réglages MANUEL mémorisés ne sont pas réappliqués au démarra
 
 ## Retour arrière
 
-Pour un retour Alpha.20 vers Alpha.19, les deux versions lisent le format de
+Pour un retour Alpha.21 vers Alpha.20, les deux versions lisent le format de
 préférences v3. Arrêter l'application, sauvegarder intégralement `/data` et
 conserver séparément les données récentes avant toute restauration. Revenir à
-Alpha.19 sur la même application et vérifier options, préférences et historique.
+Alpha.20 sur la même application et vérifier options, préférences et historique.
 Une restauration HA peut remplacer les données récentes ; préserver et
 réconcilier ces données. Aucun retour arrière ne requiert une désinstallation.
 
