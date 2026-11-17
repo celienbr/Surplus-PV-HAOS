@@ -98,7 +98,8 @@ function render(p){
 function renderApplicationHealth(p){
  const health=p.application_health||{}, rows=health.alarms||[], heartbeat=p.heartbeat||{};
  const labels={OK:'OK',DEFAUT:'DÉFAUT',NON_VERIFIABLE:'Non vérifiable',DESACTIVE:'Désactivé'};
- text('application-health-state',health.state==='ALARME'?'ALARME':health.state==='OK'?'OK':'Non vérifiable');
+ const active=rows.filter(row=>row.state==='DEFAUT').map(row=>row.id);
+ text('application-health-state',health.state==='ALARME'?'ALARME'+(active.length?' — '+active.join(', '):''):health.state==='OK'?'OK':'Non vérifiable');
  const globalBadge=$('application-health-state'), healthPanel=$('application-health');
  if(globalBadge)globalBadge.dataset.state=health.state||'NON_VERIFIABLE';
  if(healthPanel)healthPanel.dataset.state=health.state||'NON_VERIFIABLE';

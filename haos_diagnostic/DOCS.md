@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.21
+# Surplus PV — Home Assistant OS 1.0.0-alpha.22
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.20
+## Mise à jour depuis alpha.21
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.21, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.22, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Le tableau de bord indique six diagnostics indépendants. Une sonde manquante
@@ -51,9 +51,11 @@ d'échantillonnage. L'impulsion doit durer au moins 50 ms et le repos au moins
 100 ms. La coordination avec le temporisateur physique doit être vérifiée séparément.
 Une configuration incomplète empêche
 le démarrage automatique et produit une erreur dans le journal. Aucun ancien
-ordre de chauffe n'est repris au démarrage. AUTO est demandé dès le démarrage ;
-il reste inhibé tant que le watchdog, la sonde, la calibration ou les mesures
-nécessaires ne sont pas valides. Une température supérieure à 83 °C est invalide.
+ordre de chauffe n'est repris au démarrage. Le dernier mode explicitement choisi
+est mémorisé : sans historique valide, ARRÊT est retenu ; AUTO reprend après les
+contrôles de sécurité et une mesure réseau nouvelle ; MANUEL conserve ses réglages
+mais attend une nouvelle commande explicite. Un défaut DAC mémorisé exige une
+récupération explicite. Une température supérieure à 83 °C est invalide.
 
 En ARRÊT, la chauffe n'est pas demandée. En AUTO, la demande dépend des mesures
 et du plan de confort. En MANUEL, elle dépend du réglage utilisateur et de la
@@ -71,12 +73,17 @@ inhibée. Les réglages MANUEL mémorisés ne sont pas réappliqués au démarra
 
 ## Retour arrière
 
-Pour un retour Alpha.21 vers Alpha.20, les deux versions lisent le format de
-préférences v3. Arrêter l'application, sauvegarder intégralement `/data` et
-conserver séparément les données récentes avant toute restauration. Revenir à
-Alpha.20 sur la même application et vérifier options, préférences et historique.
-Une restauration HA peut remplacer les données récentes ; préserver et
-réconcilier ces données. Aucun retour arrière ne requiert une désinstallation.
+Pour revenir d'Alpha.22 à Alpha.21, arrêter l'application et sauvegarder tout
+`/data`, y compris SQLite et les fichiers WAL/SHM, dans une copie hors du Pi.
+Alpha.21 ne comprend pas les champs `requested_mode` et `dac_fault_latched` de
+`b3` : conserver une copie intacte du fichier v3 récent, puis, sur une copie
+destinée à Alpha.21, retirer uniquement ces deux champs sans modifier `legacy`
+ni les autres préférences. Vérifier le JSON et ses droits avant restauration.
+Alpha.21 demande AUTO à chaque démarrage : avant de la démarrer, faire désactiver
+`heartbeat_autostart` dans Supervisor et assurer une mise en sécurité indépendante
+de l'installation par une personne habilitée. Vérifier options, historique et état
+des sorties ; une restauration HA peut remplacer les données récentes, à préserver
+et réconcilier séparément. Ne pas désinstaller l'application.
 
 Pour un retour supplémentaire vers Alpha.18, arrêter l'application et sauvegarder intégralement
 ses données, dont SQLite, options et `/data/surplus_pv_user_settings.json` v3.

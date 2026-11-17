@@ -11,6 +11,7 @@ LEGACY_V2_FIELDS = (USER_FIELDS - {"boiler_max_temp_c"}) | {"demo_max_c"}
 LEGACY_FIELDS = (LEGACY_V2_FIELDS - {"grid_backup_enabled"}) | {"forecast_solar_entry_id"}
 B3_FIELDS = frozenset({'auto_target_c', 'predictive_target_enabled', 'weather_min_c',
                        'comfort_time', 'manual_target_c', 'manual_percent'})
+STORED_FIELDS = B3_FIELDS | {'requested_mode', 'dac_fault_latched'}
 
 
 def read_settings(path: Path, options: dict) -> tuple[dict, str]:
@@ -21,8 +22,12 @@ def read_settings(path: Path, options: dict) -> tuple[dict, str]:
         raise ValueError("Invalid saved user settings")
     b3 = {}
     if saved.get('schema_version') == 3:
-        if set(saved) != {'schema_version', 'legacy', 'b3'} or not isinstance(saved['b3'], dict) or set(saved['b3']) - B3_FIELDS:
+        if set(saved) != {'schema_version', 'legacy', 'b3'} or not isinstance(saved['b3'], dict) or set(saved['b3']) - STORED_FIELDS:
             raise ValueError('Invalid B3 settings schema')
+        if 'requested_mode' in saved['b3'] and saved['b3']['requested_mode'] not in ('ARRET', 'AUTO', 'MANUEL'):
+            raise ValueError('Invalid saved mode')
+        if 'dac_fault_latched' in saved['b3'] and type(saved['b3']['dac_fault_latched']) is not bool:
+            raise ValueError('Invalid saved DAC fault')
         b3, saved = saved['b3'], saved['legacy']
         if saved is None:
             return _merge_b3(options, b3), ''
@@ -89,8 +94,12 @@ def write_b3_settings(path: Path, values: dict):
 
     Caller must serialize and validate values before invoking this function.
     """
-    if not isinstance(values, dict) or set(values) - B3_FIELDS:
+    if not isinstance(values, dict) or set(values) - STORED_FIELDS:
         raise ValueError('Champs de préférences interdits')
+    if 'requested_mode' in values and values['requested_mode'] not in ('ARRET', 'AUTO', 'MANUEL'):
+        raise ValueError('Mode mémorisé invalide')
+    if 'dac_fault_latched' in values and type(values['dac_fault_latched']) is not bool:
+        raise ValueError('Défaut DAC mémorisé invalide')
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + '.lock')
     with lock_path.open('a+b') as lock:
@@ -104,7 +113,7 @@ def _write_b3_settings_locked(path: Path, values: dict):
     if old is not None and not isinstance(old, dict):
         raise ValueError('Invalid saved user settings')
     if old is not None and old.get('schema_version') == 3:
-        if set(old) != {'schema_version', 'legacy', 'b3'} or not isinstance(old['b3'], dict) or set(old['b3']) - B3_FIELDS:
+        if set(old) != {'schema_version', 'legacy', 'b3'} or not isinstance(old['b3'], dict) or set(old['b3']) - STORED_FIELDS:
             raise ValueError('Invalid B3 settings schema')
         legacy, previous = old['legacy'], old['b3']
     else:

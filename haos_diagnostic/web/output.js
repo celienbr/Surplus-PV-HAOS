@@ -8,6 +8,7 @@
  function paint(s,force=false){if((selecting||busy)&&!force)return;if(mode.value!==s.mode)mode.value=s.mode;mode.dataset.mode=s.mode;document.querySelectorAll('[data-output-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.outputMode===s.mode)));}
  function render(s){
   state=s;token=s.token||token;window.renderPowerGauge(s);paint(s);
+  el('output-restore').textContent=s.restore_status||'';
   const manual=s.mode==='MANUEL_REEL';
   el('manual-controls').hidden=!manual;
   el('manual-target').disabled=manual;

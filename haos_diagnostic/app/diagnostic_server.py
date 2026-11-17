@@ -273,10 +273,25 @@ class Diagnostic:
         self.user_settings_path = (Path(user_settings_path) if
                                    user_settings_path is not None else None)
         self.migrated_forecast_solar_entry_id = ""
+        self.settings_error = None
+        configured_options = dict(options)
         if self.user_settings_path is not None:
-            options, self.migrated_forecast_solar_entry_id = read_settings(
-                self.user_settings_path, options)
+            try:
+                options, self.migrated_forecast_solar_entry_id = read_settings(
+                    self.user_settings_path, options)
+                parse_options(options)
+            except (OSError, ValueError, TypeError) as exc:
+                self.settings_error = str(exc)[:160]
+                options = configured_options
+                LOG.error('Préférences invalides ou indisponibles ; démarrage en arrêt : %s', exc)
+        self.requested_mode = None if self.settings_error else options.get('requested_mode')
+        self.dac_fault_latched = options.get('dac_fault_latched', False) if not self.settings_error else False
         self.options = parse_options(options)
+        self.restore_status = ('Aucun état mémorisé valide ; démarrage en ARRÊT' if self.requested_mode is None else
+                               'Mode restauré : ARRÊT' if self.requested_mode == 'ARRET' else
+                               'Mode mémorisé : ' + self.requested_mode + ' — reprise en attente')
+        if self.settings_error:
+            self.restore_status += ' : ' + self.settings_error
         self.client = client
         self.output = OutputControl(dac or make_dac(self.options), 'boiler',
                                     auto_timeout=self.options['max_age_seconds'], max_power=self.options['max_power_w'])
@@ -290,7 +305,10 @@ class Diagnostic:
             except (TypeError, ValueError) as exc:
                 raise ValueError('Courbe puissance/courant invalide : ' + str(exc)) from exc
         self.heartbeat = HeartbeatService()
+        self.fault_lock = Lock()
         self.alarms = Alarms()
+        if self.dac_fault_latched:
+            self.alarms.observe('A002', 'DEFAUT')
         self.startup_lock = Lock()
         self.startup_auto_pending = False
         self.startup_reason = None
@@ -469,7 +487,8 @@ class Diagnostic:
                     'coverage': measurement_coverage, 'reason': measurement_reason,
                     'freshness_report': freshness_report,
                 }
-                self.alarms.observe('A004', 'OK' if communication_healthy and measurement_coverage == 'TWO_RECENT' else 'DEFAUT', now)
+                self.alarms.observe('A004', 'OK' if communication_healthy and meter_w is not None else
+                                    'NON_VERIFIABLE' if communication_healthy else 'DEFAUT', now)
 
                 temperature_invalid = True
                 failure_stage = 'thermal'
@@ -699,14 +718,14 @@ class Diagnostic:
                     self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
             output = self.output.snapshot()
             if output['error'] or output['dac'].get('communication') == 'FAULT':
-                self.alarms.observe('A002', 'DEFAUT', now)
+                self._latch_dac_fault()
             elif output['mode'] in ('AUTO_REEL', 'MANUEL_REEL') and output['dac']['ready']:
                 i2c = output.get('last_i2c') or {}
                 ack_age = (time.monotonic_ns() - i2c.get('end_ns', 0)) / 1e9
                 self.alarms.observe('A002', 'OK' if i2c.get('result') == 'ACK' and
                                     0 <= ack_age <= self.options['max_age_seconds'] else 'NON_VERIFIABLE', now)
             elif output['mode'] not in ('AUTO_REEL', 'MANUEL_REEL') and not output['error']:
-                self.alarms.observe('A002', 'DESACTIVE', now)
+                self.alarms.observe('A002', 'NON_VERIFIABLE', now)
             if timing is not None:
                 timing['i2c'] = observation_i2c
                 timing['outcome'] = ('ERROR' if self.latest['control_state'] == 'FAULT' else
@@ -817,8 +836,20 @@ class Diagnostic:
     def _report_auto_output_failure(self, task, mode):
         """A failed automatic DAC write latches the shared watchdog fault."""
         if mode == 'AUTO_REEL':
-            self.alarms.observe('A002', 'DEFAUT')
             self._heartbeat_capability(task, mode, blocked=True)
+            self._latch_dac_fault()
+
+    def _latch_dac_fault(self):
+        self.alarms.observe('A002', 'DEFAUT')
+        with self.fault_lock:
+            if self.dac_fault_latched:
+                return
+            self.dac_fault_latched = True
+            if self.user_settings_path is not None:
+                try:
+                    write_b3_settings(self.user_settings_path, {'dac_fault_latched': True})
+                except (OSError, ValueError):
+                    LOG.exception('Impossible de mémoriser le défaut DAC ; reprise non garantie après redémarrage')
 
     def refresh_control_temperature_once(self, now=None):
         injected = now is not None
@@ -910,14 +941,53 @@ class Diagnostic:
         # explicit stop or mode selection always cancels pending startup.
         with self.startup_lock:
             previous_mode = self.output.snapshot()['mode']
+            action = values.get('action') if isinstance(values, dict) else None
+            # Stop must take effect even when the settings disk has failed.
+            if action == 'stop' and set(values) == {'action'}:
+                try:
+                    if self.user_settings_path is not None:
+                        write_b3_settings(self.user_settings_path, {'requested_mode': 'ARRET'})
+                except (OSError, ValueError):
+                    self.output.command(values)
+                    self.startup_auto_pending = False
+                    raise
+                self.requested_mode = 'ARRET'
             try:
                 self._set_output(values)
             except OSError:
-                self.alarms.observe('A002', 'DEFAUT')
                 requested_auto = isinstance(values, dict) and values.get('mode') == 'AUTO_REEL'
                 if requested_auto or previous_mode == 'AUTO_REEL':
                     self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
+                self._latch_dac_fault()
                 raise
+            changes = {}
+            if action == 'mode':
+                requested = {'AUTO': 'ARRET', 'AUTO_REEL': 'AUTO', 'MANUEL_REEL': 'MANUEL'}.get(values.get('mode'))
+                if requested:
+                    changes['requested_mode'] = requested
+                    if requested == 'MANUEL':
+                        changes['manual_target_c'] = number(values.get('target_c', self.options['boiler_max_temp_c']), 30, self.options['boiler_max_temp_c'])
+            elif action == 'manual':
+                changes['manual_percent'] = self.output.snapshot()['manual_percent']
+            elif action == 'recover':
+                with self.fault_lock:
+                    if self.user_settings_path is not None:
+                        write_b3_settings(self.user_settings_path, {'dac_fault_latched': False})
+                    self.dac_fault_latched = False
+            if changes:
+                try:
+                    if self.user_settings_path is not None:
+                        write_b3_settings(self.user_settings_path, changes)
+                except (OSError, ValueError):
+                    try:
+                        self.output.command({'action': 'stop'})
+                    finally:
+                        self._heartbeat_capability('main', 'AUTO_REEL', blocked=True)
+                    raise
+                self.requested_mode = changes.get('requested_mode', self.requested_mode)
+                self.options.update({k: v for k, v in changes.items() if k not in ('requested_mode', 'dac_fault_latched')})
+            if action in ('stop', 'mode'):
+                self.restore_status = None
             if values.get('action') in ('stop', 'mode', 'recover'):
                 self.startup_auto_pending = False
                 self.startup_reason = None
@@ -958,6 +1028,8 @@ class Diagnostic:
         if not isinstance(values, dict):
             raise ValueError('Expected command object')
         if values.get('action') == 'mode' and values.get('mode') in ('AUTO_REEL', 'MANUEL_REEL'):
+            if self.dac_fault_latched:
+                raise ValueError('Défaut DAC mémorisé : récupération explicite requise')
             if not self.options['boiler_temperature_entity']:
                 raise ValueError('Sonde réelle du boiler requise')
             if not self.options['boiler_ceiling_configured']:
@@ -990,10 +1062,23 @@ class Diagnostic:
             self.startup_zeroed = False
             self.startup_next_attempt = 0.0
 
+    def restore_requested_mode(self):
+        """Restore only persisted operator intent, never a previous output value."""
+        if self.requested_mode == 'AUTO' and self.dac_fault_latched:
+            self.startup_reason = 'Défaut DAC mémorisé : récupération explicite requise'
+        elif self.requested_mode == 'AUTO':
+            self.begin_auto_start()
+        elif self.requested_mode == 'MANUEL':
+            self.restore_status = 'Mode mémorisé : MANUEL — reprise en attente ; sélectionner MANUEL et confirmer la commande'
+
     def startup_once(self):
         """Advance startup with safe zero, configured watchdog and live inputs."""
         with self.startup_lock:
             if not self.startup_auto_pending:
+                return
+            if self.dac_fault_latched:
+                self.startup_reason = 'Défaut DAC mémorisé : récupération explicite requise'
+                self.startup_auto_pending = False
                 return
             if self.output.dac.kind != 'gp8600' or self.output.connection != 'boiler':
                 self.startup_reason = 'AUTO inhibé : configurer le GP8600 et le raccordement boiler'
@@ -1005,7 +1090,7 @@ class Diagnostic:
                 try:
                     self.output.prepare_heartbeat()
                 except OSError as exc:
-                    self.alarms.observe('A002', 'DEFAUT')
+                    self._latch_dac_fault()
                     self.startup_reason = 'AUTO inhibé : initialisation DAC impossible : ' + str(exc)[:120]
                     self.startup_auto_pending = False
                     return
@@ -1070,15 +1155,24 @@ class Diagnostic:
 
     def output_status(self):
         status = self.output.snapshot()
-        # This represents requested mode only; the actual writer remains off.
         if self.startup_auto_pending:
-            status.update(mode='AUTO_REEL', auto_suspended=True, enabled=False,
+            status.update(auto_suspended=True, enabled=False,
                           heat_requested=False, reason=self.startup_reason,
                           auto_physical_enabled=False, startup_pending=True)
         else:
             status['startup_pending'] = False
             if self.startup_reason:
                 status['reason'] = self.startup_reason
+        status['requested_mode'] = self.requested_mode
+        if self.restore_status and self.requested_mode == 'AUTO':
+            if (status['mode'] == 'AUTO_REEL' and not status['auto_suspended'] and not status['error']
+                    and self.heartbeat.snapshot()['state'] == 'NORMAL'):
+                self.restore_status = 'Mode restauré : AUTO'
+            else:
+                self.restore_status = 'Mode mémorisé : AUTO — reprise en attente' + ((' : ' + self.startup_reason) if self.startup_reason else '')
+        status['restore_status'] = self.restore_status
+        status['saved_manual_target_c'] = self.options['manual_target_c']
+        status['saved_manual_percent'] = self.options['manual_percent']
         return status
 
     def set_heartbeat(self, command):
@@ -1105,6 +1199,8 @@ class Diagnostic:
         if (set(command) != {'action', 'driver', 'confirm', 'period_s', 'width_s'}
                 or command['action'] != 'start' or command['confirm'] is not True):
             raise ValueError('Explicit heartbeat confirmation required')
+        if self.dac_fault_latched:
+            raise ValueError('Défaut DAC mémorisé : récupération explicite requise')
         period = number(command['period_s'], .1, 3600)
         width = number(command['width_s'], .001, period)
         if width >= period or width > self.options['max_age_seconds'] or self.heartbeat.snapshot()['state'] != 'ARRET':
@@ -1119,7 +1215,7 @@ class Diagnostic:
             try:
                 self.output.prepare_heartbeat()
             except OSError:
-                self.alarms.observe('A002', 'DEFAUT')
+                self._latch_dac_fault()
                 raise
             self.alarms.observe('A002', 'OK')
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
@@ -1214,9 +1310,17 @@ class Diagnostic:
                 solar_valid = coverage.get('status') == 'OK'
             except (ValueError, TypeError, KeyError):
                 solar_valid = False
-        self.alarms.observe('A005', 'DESACTIVE' if not weather_needed else
-                            'OK' if meteo == 'OK' else
-                            'NON_VERIFIABLE' if meteo in (None, 'WAITING', 'PARTIAL') else 'DEFAUT', now)
+        current = profile.get('current_temperature_c')
+        current_error = profile.get('current_temperature_error')
+        weather_state = ('DESACTIVE' if not weather_needed else
+                         'OK' if meteo == 'OK' and current is not None else
+                         'DEFAUT' if meteo == 'UNAVAILABLE' else
+                         'NON_VERIFIABLE')
+        detail = ('Température actuelle disponible ; ' if current is not None else
+                  'Température actuelle indisponible ; ' if current_error else 'Température actuelle non vérifiée ; ')
+        detail += {'OK': 'prévisions horaires complètes.', 'PARTIAL': 'prévisions horaires partielles.',
+                   'UNAVAILABLE': 'prévisions horaires indisponibles.'}.get(meteo, 'prévisions horaires non vérifiées.')
+        self.alarms.observe('A005', weather_state, now, detail=detail if weather_needed else None)
         self.alarms.observe('A006', 'DESACTIVE' if not solar_needed else
                             'OK' if solar_valid else
                             'NON_VERIFIABLE' if solar in (None, 'WAITING') else 'DEFAUT', now)
@@ -1266,7 +1370,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.21",
+            "version": "1.0.0-alpha.22",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1634,7 +1738,7 @@ def main():
                                                       "/data/surplus_pv_user_settings.json"))
     diag.start_record_worker()
     stop = Event()
-    diag.begin_auto_start()
+    diag.restore_requested_mode()
     def thermal_loop():
         while not stop.is_set():
             diag.refresh_control_temperature_once()
