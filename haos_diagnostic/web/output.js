@@ -16,7 +16,7 @@
   if(manual)el('manual-target').value=s.target_c;
   else if(Number(el('manual-target').value)>s.thermal_ceiling_c)el('manual-target').value=s.thermal_ceiling_c;
   if(!editing&&!busy){el('manual-power').value=s.manual_percent;el('manual-percent').textContent=s.manual_percent+' %';}
-  const communication=s.dac.communication==='INACTIVE'?'inactif — non initialisé':s.dac.communication;
+  const communication=s.dac.communication==='INACTIVE'?'inactif — non initialisé':s.dac.communication==='ACK'?'dernier échange acquitté':s.dac.communication;
   el('output-driver').textContent=`Pilote GP8600 · I²C ${communication} · dernier ACK ${fmt(s.dac.last_acknowledged_ma)} mA (commande, pas mesure) · adresse ${s.dac.address??'—'}`;
   const thermal=s.boiler_temperature_diagnostic||{};
   el('output-state').textContent=s.reason+' · température '+fmt(s.temperature_c)+' °C'+(thermal.reason?' · '+thermal.reason:'')+(s.heat_requested?' · chauffe demandée':' · aucune chauffe demandée')+` · calibration ${s.power_calibrated?'confirmée':'non confirmée : AUTO inhibé'}`;

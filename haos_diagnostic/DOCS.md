@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.23
+# Surplus PV — Home Assistant OS 1.0.0-alpha.24
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.22
+## Mise à jour depuis alpha.23
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.23, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.24, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Le tableau de bord indique six diagnostics indépendants. Une sonde manquante
@@ -75,6 +75,12 @@ quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Les réglages MANUEL mémorisés ne sont pas réappliqués au démarrage.
 
 ## Retour arrière
+
+Pour revenir d'Alpha.24 à Alpha.23, arrêter l'application, sauvegarder `/data`,
+SQLite avec WAL/SHM et les réglages hors Pi, et préserver les données récentes.
+Restaurer la même application sans désinstallation ; une sauvegarde restaurée
+peut écraser les données plus récentes, à réconcilier séparément. Vérifier les
+options et l'historique avant reprise. Ce retour n'a pas été validé sur Pi.
 
 Pour revenir d'Alpha.23 à Alpha.22, arrêter l'application et sauvegarder `/data`
 et toutes les données récentes, y compris SQLite et ses fichiers WAL/SHM, avec

@@ -8,6 +8,9 @@ from time import monotonic, monotonic_ns
 from .gp8600 import number
 from .boiler_temperature import valid_boiler_temperature
 
+# Recheck an unchanged AUTO command on a fresh valid control observation.
+# This is not a measurement of the output and never applies to MANUEL.
+AUTO_I2C_RECHECK_NS = 10_000_000_000
 
 class OutputControl:
     def __init__(self, dac, connection="boiler", auto_timeout=60, max_power=6000):
@@ -225,10 +228,15 @@ class OutputControl:
                     self._stop("Consigne AUTO invalide ; réarmement explicite nécessaire")
                     raise
                 ma = 0 if power_w == 0 else self.power_curve.current_for_power(power_w)
-                # An unchanged, previously acknowledged command requires no
-                # additional I²C transaction. Recovery always initializes at
-                # zero and stale/thermal faults still use the stop path.
-                sent = ma != self.requested_ma
+                # Re-send only a freshly calculated, authorized AUTO command.
+                # This bounds the time a disconnected device can remain
+                # undetected while the request is constant. Never replay a
+                # stored command without a new measurement or in MANUEL.
+                ack = self.last_i2c or {}
+                age_ns = monotonic_ns() - ack.get('end_ns', 0)
+                recheck = (new_sample and (ack.get('result') != 'ACK' or
+                           age_ns < 0 or age_ns >= AUTO_I2C_RECHECK_NS))
+                sent = ma != self.requested_ma or recheck
                 if sent:
                     try:
                         self._write(ma)
@@ -264,6 +272,10 @@ class OutputControl:
 
     def snapshot(self):
         with self.lock:
+            i2c = self.last_i2c or {}
+            age = (monotonic_ns() - i2c['end_ns']) / 1e9 if i2c.get('result') == 'ACK' else None
+            if age is not None and age < 0:
+                age = None
             return {"mode": self.mode, "revision": self.revision,
                     "enabled": self.enabled, "requested_ma": self.requested_ma, "max_power_w": self.max_power,
                     "manual_percent": self.manual_percent, "target_c": self.target_c,
@@ -271,7 +283,7 @@ class OutputControl:
                                        or (self.mode == "AUTO_REEL" and self.auto_power_w > 0)) and self.enabled,
                     "auto_requested_power_w": self.auto_power_w, "auto_physical_enabled": self.mode == "AUTO_REEL",
                     "auto_suspended": self.auto_suspended,
-                    "last_i2c": self.last_i2c, "i2c_writes": self.i2c_writes,
+                    "last_i2c": self.last_i2c, "last_ack_age_s": age, "i2c_writes": self.i2c_writes,
                     "i2c_avoided": self.i2c_avoided,
                     "power_mapping": "MESURES_VALIDEES" if self.power_curve and self.power_curve.validated else "NON_CONFIGUREE",
                     "connection": self.connection, "reason": self.reason, "error": self.error,
