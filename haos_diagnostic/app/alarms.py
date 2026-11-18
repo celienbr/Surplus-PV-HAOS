@@ -19,46 +19,53 @@ class Alarms:
                            'state': 'NON_VERIFIABLE', 'at': None, 'healthy_samples': 0}
                      for key, (name, description) in DEFINITIONS.items()}
 
-    def observe(self, key, state, at=None, detail=None, *, evidence_monotonic=None, evidence_ttl=None):
+    def observe(self, key, state, at=None, detail=None, *, evidence=None,
+                evidence_monotonic=None, evidence_ttl=None, confirmed=False):
         if state not in ('OK', 'DEFAUT', 'NON_VERIFIABLE', 'NON_SOLLICITE', 'DESACTIVE'):
             raise ValueError('Invalid alarm state')
         stamp = (at or datetime.now(timezone.utc)).isoformat()
         with self.lock:
             row = self.rows[key]
-            if key == 'A002' and state == 'DESACTIVE' and row['state'] == 'DEFAUT':
-                return  # stopping AUTO does not prove that the DAC recovered
-            # Unknown is not proof of recovery; two consecutive good samples
-            # are required to clear a fault. Disabling a feature is explicit.
-            if state == 'OK' and row['state'] == 'DEFAUT':
+            if state == 'OK' and row['state'] == 'DEFAUT' and not confirmed:
+                if evidence is not None and evidence == row.get('healthy_evidence'):
+                    return row['state']
+                row['healthy_evidence'] = evidence
                 row['healthy_samples'] += 1
                 if row['healthy_samples'] < 2:
-                    return
-            elif state in ('NON_VERIFIABLE', 'NON_SOLLICITE') and row['state'] == 'DEFAUT':
+                    return row['state']
+            elif state in ('NON_VERIFIABLE', 'NON_SOLLICITE', 'DESACTIVE') and row['state'] == 'DEFAUT':
                 row['healthy_samples'] = 0
-                return
+                row['activity'] = state
+                return row['state']
             else:
                 row['healthy_samples'] = 0
             row['observed_monotonic'] = monotonic() if evidence_monotonic is None else evidence_monotonic
             row['evidence_monotonic'] = evidence_monotonic
             row['evidence_ttl'] = evidence_ttl
             row['detail'] = detail
+            row['activity'] = None
             if state != row['state'] or row['at'] is None:
                 row['state'], row['at'] = state, stamp
             if state != 'DEFAUT':
                 row['healthy_samples'] = 0
+            if row['healthy_samples'] == 0:
+                row['healthy_evidence'] = None
+            return row['state']
+
+    def confirm_dac_recovery(self, last_ack, ttl):
+        self.observe('A002', 'OK', evidence_monotonic=last_ack, evidence_ttl=ttl,
+                     confirmed=True)
 
     def snapshot(self):
         with self.lock:
             rows = []
             now = monotonic()
             for row in self.rows.values():
-                public = {k: v for k, v in row.items() if k not in ('healthy_samples', 'observed_monotonic', 'evidence_monotonic', 'evidence_ttl', 'detail')}
+                public = {k: row[k] for k in ('id', 'name', 'description', 'state', 'at')}
                 ttl = row.get('evidence_ttl') or (3600 if row['id'] in ('A005', 'A006') else 120)
                 age = now - row.get('observed_monotonic', 0)
                 if row['state'] == 'OK' and not 0 <= age <= ttl:
                     public['state'] = 'NON_VERIFIABLE'
-                if row['state'] == 'NON_SOLLICITE' and row.get('evidence_monotonic') is not None and 0 <= age <= ttl:
-                    public['state'] = 'OK'
                 if public['state'] == 'OK':
                     public['description'] = 'Aucun défaut confirmé lors des dernières vérifications.'
                 elif public['state'] == 'NON_VERIFIABLE':
@@ -69,12 +76,18 @@ class Alarms:
                     public['description'] = 'DAC non sollicité ; communication non vérifiée en continu.'
                 if row.get('detail') and public['state'] == row['state']:
                     public['description'] = row['detail']
+                if row.get('activity') in ('NON_SOLLICITE', 'DESACTIVE'):
+                    public['activity'] = row['activity']
+                    public['description'] += ' Fonction non sollicitée actuellement. Défaut précédent à confirmer.'
+                elif row.get('activity') == 'NON_VERIFIABLE':
+                    public['activity'] = 'NON_VERIFIABLE'
                 if row['id'] == 'A002' and public['state'] == 'NON_VERIFIABLE':
                     public['description'] = 'Communication I²C non vérifiée ; aucun courant physique mesuré.'
                 elif row['id'] == 'A002' and public['state'] == 'OK':
                     public['description'] = 'Un ACK I²C récent a été reçu ; identité du DAC et courant de sortie non mesurés.'
                 elif row['id'] == 'A002' and public['state'] == 'NON_SOLLICITE':
                     public['description'] = (row.get('detail') or public['description']) + ' Aucun courant physique mesuré.'
+                    public.update(state='OK', activity='NON_SOLLICITE')
                 rows.append(public)
         states = {row['state'] for row in rows}
         overall = 'ALARME' if 'DEFAUT' in states else ('NON_VERIFIABLE' if 'NON_VERIFIABLE' in states else 'OK')

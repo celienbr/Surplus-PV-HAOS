@@ -105,7 +105,9 @@ function renderApplicationHealth(p){
  const globalBadge=$('application-health-state'), healthPanel=$('application-health');
  if(globalBadge)globalBadge.dataset.state=health.state||'NON_VERIFIABLE';
  if(healthPanel)healthPanel.dataset.state=health.state||'NON_VERIFIABLE';
- text('application-health-mode',heartbeat.state==='DEFAUT' ?
+ text('application-health-mode',p.output_control?.dac_recovery?.pending ?
+  'Récupération automatique du DAC à 0 mA · chauffe suspendue.' :
+  heartbeat.state==='DEFAUT' ?
   'Heartbeat en défaut · commande non confirmée.' :
   health.state==='ALARME' ? 'Une intervention est nécessaire.' :
   health.state==='OK' ? 'Aucun défaut identifié dans les fonctions surveillées.' :

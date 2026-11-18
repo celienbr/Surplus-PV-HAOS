@@ -74,7 +74,7 @@ class OutputControl:
                 self.auto_deadline = None
                 self.reason = 'Erreur DAC ; AUTO inhibé, sortie physique inconnue'
             else:
-                self._clear("Erreur DAC ; reprise explicite à zéro nécessaire")
+                self._clear("Erreur DAC ; récupération à zéro en attente")
             self.error = str(exc)[:160]
             raise
         self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ACK'}
@@ -106,13 +106,25 @@ class OutputControl:
                 self._suspend_auto("Chauffe suspendue : calcul AUTO périmé")
 
     def inhibit_unready_dac(self):
-        """Fail closed when AUTO loses the initialized DAC without an ioctl."""
+        """Fail closed when a physical mode loses the initialized DAC."""
         with self.lock:
-            if self.mode != 'AUTO_REEL' or self.dac.ready:
+            if self.mode not in ('AUTO_REEL', 'MANUEL_REEL') or self.dac.ready:
                 return False
-            self._suspend_auto('DAC non prêt ; sortie physique inconnue')
-            self.error = 'DAC non prêt ; commande AUTO inhibée'
+            if self.mode == 'AUTO_REEL':
+                self._suspend_auto('DAC non prêt ; sortie physique inconnue')
+            else:
+                self._clear('DAC non prêt ; sortie physique inconnue')
+            self.error = 'DAC non prêt ; commande inhibée'
             return True
+
+    def probe_zero(self):
+        """Reopen I²C and perform only the driver's zero initialization."""
+        with self.lock:
+            self._clear("Vérification I²C à zéro ; commande suspendue")
+            self._initialize()
+            self.dac.close()
+            if self.error:
+                raise OSError(self.error)
 
     def _suspend_auto(self, reason):
         if not self.auto_suspended:
@@ -145,32 +157,38 @@ class OutputControl:
                 raise OSError(self.error)
             self.dac.close()
 
+    def validate_mode(self, data, now):
+        """Validate a mode selection before changing output or preferences."""
+        if set(data) - {"action", "mode", "target_c", "confirmed"}:
+            raise ValueError("Unexpected mode fields")
+        mode = data.get("mode")
+        if mode not in ("AUTO", "AUTO_REEL", "MANUEL_REEL"):
+            raise ValueError("Unknown output mode")
+        if mode in ("AUTO_REEL", "MANUEL_REEL") and data.get("confirmed") is not True:
+            raise ValueError("Confirmer explicitement la commande physique sur installation")
+        if mode == "MANUEL_REEL":
+            target = number(data.get("target_c", self.ceiling), 30, self.ceiling)
+            if not self._temperature_ok(now):
+                raise ValueError("Une température valide est requise")
+            return target
+        if mode == "AUTO_REEL":
+            if not self._temperature_ok(now) or self.temperature.value >= self.ceiling:
+                raise ValueError("Température réelle valide sous le plafond requise")
+            if self.power_curve is None or not self.power_curve.validated:
+                raise ValueError("Courbe puissance/courant mesurée et validée requise")
+        return None
+
     def command(self, data, now=None):
         """Serialized, synchronous write. Never enqueue an old slider command."""
         now = now or datetime.now(timezone.utc)
         with self.lock:
             action = data.get("action")
             if action == "mode":
-                if set(data) - {"action", "mode", "target_c", "confirmed"}:
-                    raise ValueError("Unexpected mode fields")
                 mode = data.get("mode")
-                if mode not in ("AUTO", "AUTO_REEL", "MANUEL_REEL"):
-                    raise ValueError("Unknown output mode")
-                if mode in ("AUTO_REEL", "MANUEL_REEL") and data.get("confirmed") is not True:
-                    raise ValueError("Confirmer explicitement la commande physique sur installation")
-                # Validate before changing state, but no transition can retain heat.
-                target = None
-                if mode == "MANUEL_REEL":
-                    target = number(data.get("target_c", self.ceiling), 30, self.ceiling)
-                    if not self._temperature_ok(now):
-                        raise ValueError("Une température valide est requise")
-                    if self.temperature.value >= target:
-                        self._stop("Consigne déjà atteinte ; ARRÊT")
-                        return
-                if mode == "AUTO_REEL" and (not self._temperature_ok(now) or self.temperature.value >= self.ceiling):
-                    raise ValueError("Température réelle valide sous le plafond requise")
-                if mode == "AUTO_REEL" and (self.power_curve is None or not self.power_curve.validated):
-                    raise ValueError("Courbe puissance/courant mesurée et validée requise")
+                target = self.validate_mode(data, now)
+                if mode == "MANUEL_REEL" and self.temperature.value >= target:
+                    self._stop("Consigne déjà atteinte ; chauffe suspendue")
+                    return
                 self._stop("Changement de mode ; anciennes consignes supprimées")
                 if mode in ("AUTO_REEL", "MANUEL_REEL"):
                     self._initialize()

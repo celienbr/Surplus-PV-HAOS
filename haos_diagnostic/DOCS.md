@@ -1,24 +1,38 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.25
+# Surplus PV — Home Assistant OS 1.0.0-alpha.26
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis alpha.24
+## Mise à jour depuis Alpha.25
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.25, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.26, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
-Le tableau de bord indique six diagnostics indépendants. Une sonde manquante
-peut produire une estimation de confort basée sur 35 °C : ce n'est jamais une
-mesure et elle n'autorise pas la chauffe. Si le calcul AUTO échoue, un repli à
-zéro ne garantit pas le confort. Un défaut DAC en AUTO bloque le heartbeat et
-requiert une reprise explicite. Un accusé I²C ne mesure pas le courant réel.
+Le tableau de bord indique six diagnostics indépendants. Une estimation de
+confort à 35 °C reste indicative et ne peut autoriser la chauffe. Un défaut DAC
+dans un mode physique suspend la chauffe et inhibe le heartbeat. Le journal
+conserve les transitions de défaut et de récupération.
+
+Le service réessaie la liaison à 0 mA. Trois initialisations acquittées et
+espacées de cinq secondes sont requises. Après un échec, le délai augmente
+jusqu’à 60 secondes. Une fois le défaut effacé, la reprise vérifie de nouveau
+le watchdog, la sonde du boiler et les limites thermiques. AUTO attend de
+nouvelles mesures gPlugK et utilise la courbe puissance/courant validée et la
+rampe existante. MANUEL reprend le pourcentage et la cible mémorisés dès
+qu’une nouvelle mesure est valide et inférieure à la cible et au plafond.
+gPlugK ne conditionne pas cette reprise en MANUEL. ARRÊT annule la reprise et
+la vérification du DAC peut continuer à zéro.
+
+Un ACK I²C confirme un échange de données. L’identité du DAC, le courant
+analogique et la puissance ne sont pas mesurés. Une absence de communication
+est détectable au cours d’un échange. Un DAC au repos peut afficher A002 OK
+avec la mention « liaison non vérifiée en continu » dans DIAGNOSTIC.
 
 Dans Pilotage, la consigne AUTO utilisateur est bornée par le plafond
 `boiler_max_temp_c` des options Supervisor. Le choix Prévision réutilise le
@@ -49,16 +63,12 @@ et la durée d'impulsion sont nulles par défaut : les renseigner avec les valeu
 établies sur l'installation. Le timeout est au moins deux fois l'intervalle
 d'échantillonnage. L'impulsion doit durer au moins 50 ms et le repos au moins
 100 ms. La coordination avec le temporisateur physique doit être vérifiée séparément.
-Si cette option est activée, le heartbeat démarre aussi lorsque le dernier mode
-est ARRÊT ou MANUEL. Les impulsions peuvent modifier l'état du watchdog Omron et
-des relais associés ; leur effet physique n'est pas mesuré par l'application.
-Une configuration incomplète empêche
-le démarrage automatique et produit une erreur dans le journal. Aucun ancien
-ordre de chauffe n'est repris au démarrage. Le dernier mode explicitement choisi
-est mémorisé : sans historique valide, ARRÊT est retenu ; AUTO reprend après les
-contrôles de sécurité et une mesure réseau nouvelle ; MANUEL conserve ses réglages
-mais attend une nouvelle commande explicite. Un défaut DAC mémorisé exige une
-récupération explicite. Une température supérieure à 83 °C est invalide.
+Si cette option est activée, le heartbeat peut aussi démarrer en ARRÊT,
+avec une demande de courant nulle. La récupération exige des tâches critiques
+à jour et une impulsion logicielle complète de GPIO17. Un relevé électrique
+séparé est nécessaire pour connaître le signal effectivement reçu par
+l’Omron et l’état des relais. Sans configuration valide, la demande de chauffe
+reste mémorisée et suspendue. Une température supérieure à 83 °C est invalide.
 
 En ARRÊT, la chauffe n'est pas demandée. En AUTO, la demande dépend des mesures
 et du plan de confort. En MANUEL, elle dépend du réglage utilisateur et de la
@@ -72,9 +82,19 @@ indépendantes restent nécessaires.
 Les préférences Alpha.18 sont conservées dans le fichier v3 sous `legacy` ;
 un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
 quand un fichier existait. Sans plafond configuré, la commande réelle reste
-inhibée. Les réglages MANUEL mémorisés ne sont pas réappliqués au démarrage.
+inhibée. Le format v3 et la base SQLite sont conservés.
 
 ## Retour arrière
+
+Pour revenir d’Alpha.26 à Alpha.25, demander ARRÊT et vérifier qu’il est
+enregistré. Arrêter l’application. Sauvegarder l’application et tout
+`/data`, dont les préférences, SQLite et ses fichiers WAL/SHM, avec une
+copie hors du Pi. Conserver les données récentes séparément avant de
+restaurer la version Alpha.25 de la même application sans la désinstaller.
+Alpha.25 ignore le marqueur `.stop` utilisé lors d’un échec d’écriture.
+Vérifier que le fichier v3 destiné à Alpha.25 indique `requested_mode:
+ARRET` avant son redémarrage. Vérifier ensuite les options et l’historique
+et réconcilier les données plus récentes. Le retour arrière réel reste à tester.
 
 Pour revenir d'Alpha.25 à Alpha.24, arrêter l’application et conserver une
 sauvegarde actuelle de /data, SQLite avec WAL/SHM, préférences et historique,
@@ -128,5 +148,7 @@ les réconcilier. Vérifier le slug, les options, l'historique et les réglages.
 La conservation du fichier v3 ne rend pas Alpha.18 compatible avec son contenu ;
 les champs B3 restent archivés pour une reprise ou conversion contrôlée.
 
-La mise à jour et les essais logiciels ne constituent pas une validation physique
-des contacts, des températures, des courants ou de la chaîne thermique.
+Les protections indépendantes TH1/STB1, le watchdog Omron et le secours S2
+gardent leur rôle matériel. Les essais logiciels laissent les risques B01–B10
+ouverts et ne mesurent ni les contacts, ni le courant analogique, ni la chaîne
+thermique.

@@ -1,3 +1,16 @@
+# 1.0.0-alpha.26 — récupération automatique
+
+- A002 inhibe les modes physiques et le heartbeat sur erreur I²C. Trois essais
+  espacés à 0 mA et l’enregistrement du rétablissement permettent de rouvrir
+  les vérifications. Les essais en échec sont temporisés jusqu’à 60 s.
+- AUTO repart après un cycle watchdog complet, une nouvelle température
+  et de nouvelles mesures gPlugK. La demande est recalculée avec la calibration
+  validée et les limites de puissance existantes.
+- MANUEL restaure le pourcentage et la cible mémorisés. La chauffe attend une
+  nouvelle mesure sous la cible et le plafond. ARRÊT annule la reprise.
+- Le journal conserve le défaut et le rétablissement. Un ACK I²C ne mesure
+  pas le courant réel. Les risques matériels B01–B10 restent ouverts.
+
 # 1.0.0-alpha.25 — candidat en validation
 
 Autotest DAC au démarrage uniquement à zéro ; état non sollicité distinct,

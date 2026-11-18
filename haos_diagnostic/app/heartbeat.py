@@ -28,6 +28,7 @@ class Heartbeat:
         self.last_pulse = None
         self.last_pulse_at = None
         self.pulse_count = 0
+        self.completed_pulse_count = 0
         self.armed_at = None
         self.next_pulse = self.pulse_end = None
         self.active = False
@@ -69,6 +70,7 @@ class Heartbeat:
             if self.active and now >= self.pulse_end:
                 self.output.set_active(False)
                 self.active = False
+                self.completed_pulse_count += 1
             elif not self.active and now >= self.next_pulse:
                 self.output.set_active(True)
                 self.active = True
@@ -222,11 +224,14 @@ class HeartbeatService:
             if overdue and self.pending_fault is None:
                 self.pending_fault = 'Impulsion logicielle périmée'
             state = 'DEFAUT' if overdue or self.pending_fault is not None else hb.state
+            if self.pending_stop and state != 'DEFAUT':
+                state = 'ARRET'
             reason = self.pending_fault if state == 'DEFAUT' and self.pending_fault else hb.reason
             return {'state': state, 'active': hb.active and state == 'NORMAL', 'reason': reason,
                     'last_pulse_monotonic': hb.last_pulse, 'period_s': hb.period,
                     'last_pulse_at': hb.last_pulse_at, 'last_pulse_age_s': age,
                     'pulse_count': hb.pulse_count,
+                    'completed_pulse_count': hb.completed_pulse_count,
                     'task_timeout_s': hb.timeout,
                     'task_progress_monotonic': dict(hb.tasks),
                     'task_age_s': {name: (None if stamp is None else max(0, hb.clock() - stamp))

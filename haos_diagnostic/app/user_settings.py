@@ -14,6 +14,30 @@ B3_FIELDS = frozenset({'auto_target_c', 'predictive_target_enabled', 'weather_mi
 STORED_FIELDS = B3_FIELDS | {'requested_mode', 'dac_fault_latched'}
 
 
+def stop_marker(path: Path) -> Path:
+    return path.with_name(path.name + '.stop')
+
+
+def remember_stop(path: Path):
+    """Keep ARRÊT durable even if replacement of the preferences fails."""
+    marker = stop_marker(path)
+    try:
+        with marker.open('xb') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+    except FileExistsError:
+        pass
+    sync_directory(path.parent)
+
+
+def sync_directory(path: Path):
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def read_settings(path: Path, options: dict) -> tuple[dict, str]:
     if not path.exists():
         return options, ""
@@ -106,6 +130,10 @@ def write_b3_settings(path: Path, values: dict):
         os.chmod(lock_path, 0o600)
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         _write_b3_settings_locked(path, values)
+        # A new mode supersedes the stop marker only after the mode is durable.
+        if 'requested_mode' in values and stop_marker(path).exists():
+            stop_marker(path).unlink()
+            sync_directory(path.parent)
 
 
 def _write_b3_settings_locked(path: Path, values: dict):
@@ -139,11 +167,7 @@ def _write_b3_settings_locked(path: Path, values: dict):
             json.dump(payload, f, ensure_ascii=False, allow_nan=False)
             f.flush(); os.fsync(f.fileno())
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
