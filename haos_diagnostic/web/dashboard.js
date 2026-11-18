@@ -116,7 +116,7 @@ function renderApplicationHealth(p){
   const item=document.createElement('article');item.className='application-alarm';
   const identifier=document.createElement('span');identifier.className='application-alarm-id';identifier.textContent=alarm.id;
   const name=document.createElement('strong');name.textContent=alarm.name;
-  const state=document.createElement('span');state.className='application-badge';state.dataset.state=alarm.state;state.textContent=labels[alarm.state]||'Non vérifiable';
+  const state=document.createElement('span');state.className='application-badge';state.dataset.state=alarm.state;state.textContent=alarm.id==='A002'&&alarm.state==='NON_VERIFIABLE'?'NON CONFIRMÉ':labels[alarm.state]||'Non vérifiable';
   const description=document.createElement('p');description.textContent=alarm.description;
   const when=document.createElement('time');
   if(alarm.at){const stamp=new Date(alarm.at);when.textContent=Number.isNaN(stamp.valueOf())?alarm.at:stamp.toLocaleString('fr-CH');when.dateTime=alarm.at;}

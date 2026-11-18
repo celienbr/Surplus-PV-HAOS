@@ -19,13 +19,14 @@ class Alarms:
                            'state': 'NON_VERIFIABLE', 'at': None, 'healthy_samples': 0}
                      for key, (name, description) in DEFINITIONS.items()}
 
-    def observe(self, key, state, at=None, detail=None):
+    def observe(self, key, state, at=None, detail=None, *, evidence_monotonic=None, evidence_ttl=None):
         if state not in ('OK', 'DEFAUT', 'NON_VERIFIABLE', 'DESACTIVE'):
             raise ValueError('Invalid alarm state')
         stamp = (at or datetime.now(timezone.utc)).isoformat()
         with self.lock:
             row = self.rows[key]
-            row['observed_monotonic'] = monotonic()
+            row['observed_monotonic'] = monotonic() if evidence_monotonic is None else evidence_monotonic
+            row['evidence_ttl'] = evidence_ttl
             row['detail'] = detail
             if key == 'A002' and state == 'DESACTIVE' and row['state'] == 'DEFAUT':
                 return  # stopping AUTO does not prove that the DAC recovered
@@ -50,9 +51,10 @@ class Alarms:
             rows = []
             now = monotonic()
             for row in self.rows.values():
-                public = {k: v for k, v in row.items() if k not in ('healthy_samples', 'observed_monotonic', 'detail')}
-                ttl = 3600 if row['id'] in ('A005', 'A006') else 120
-                if row['state'] == 'OK' and now - row.get('observed_monotonic', 0) > ttl:
+                public = {k: v for k, v in row.items() if k not in ('healthy_samples', 'observed_monotonic', 'evidence_ttl', 'detail')}
+                ttl = row.get('evidence_ttl') or (3600 if row['id'] in ('A005', 'A006') else 120)
+                age = now - row.get('observed_monotonic', 0)
+                if row['state'] == 'OK' and not 0 <= age <= ttl:
                     public['state'] = 'NON_VERIFIABLE'
                 if public['state'] == 'OK':
                     public['description'] = 'Aucun défaut confirmé lors des dernières vérifications.'
@@ -64,6 +66,8 @@ class Alarms:
                     public['description'] = row['detail']
                 if row['id'] == 'A002' and public['state'] == 'NON_VERIFIABLE':
                     public['description'] = 'Communication I²C non vérifiée ; aucun courant physique mesuré.'
+                elif row['id'] == 'A002' and public['state'] == 'OK':
+                    public['description'] = 'Un ACK I²C récent a été reçu ; identité du DAC et courant de sortie non mesurés.'
                 rows.append(public)
         states = {row['state'] for row in rows}
         overall = 'ALARME' if 'DEFAUT' in states else ('NON_VERIFIABLE' if 'NON_VERIFIABLE' in states else 'OK')

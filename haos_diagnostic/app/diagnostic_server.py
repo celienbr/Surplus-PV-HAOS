@@ -719,11 +719,16 @@ class Diagnostic:
             output = self.output.snapshot()
             if output['error'] or output['dac'].get('communication') == 'FAULT':
                 self._latch_dac_fault()
+            elif self.dac_fault_latched:
+                # A previous ACK or a repeated poll cannot clear a latched fault.
+                self.alarms.observe('A002', 'DEFAUT', now)
             elif output['mode'] in ('AUTO_REEL', 'MANUEL_REEL') and output['dac']['ready']:
                 i2c = output.get('last_i2c') or {}
                 ack_age = (time.monotonic_ns() - i2c.get('end_ns', 0)) / 1e9
                 self.alarms.observe('A002', 'OK' if i2c.get('result') == 'ACK' and
-                                    0 <= ack_age <= self.options['max_age_seconds'] else 'NON_VERIFIABLE', now)
+                                    0 <= ack_age <= self.options['max_age_seconds'] else 'NON_VERIFIABLE', now,
+                                    evidence_monotonic=i2c.get('end_ns', 0) / 1e9,
+                                    evidence_ttl=self.options['max_age_seconds'])
             elif output['mode'] not in ('AUTO_REEL', 'MANUEL_REEL') and not output['error']:
                 self.alarms.observe('A002', 'NON_VERIFIABLE', now)
             if timing is not None:
@@ -1094,7 +1099,8 @@ class Diagnostic:
                     self.startup_reason = 'AUTO inhibé : initialisation DAC impossible : ' + str(exc)[:120]
                     self.startup_auto_pending = False
                     return
-                self.alarms.observe('A002', 'OK')
+                self.alarms.observe('A002', 'OK', evidence_monotonic=self.output.last_i2c['end_ns'] / 1e9,
+                                    evidence_ttl=self.options['max_age_seconds'])
                 self.startup_zeroed = True
                 self.startup_next_attempt = 0.0
             hb = self.heartbeat.snapshot()
@@ -1238,7 +1244,8 @@ class Diagnostic:
             except OSError:
                 self._latch_dac_fault()
                 raise
-            self.alarms.observe('A002', 'OK')
+            self.alarms.observe('A002', 'OK', evidence_monotonic=self.output.last_i2c['end_ns'] / 1e9,
+                                evidence_ttl=self.options['max_age_seconds'])
             output = GPIOOutput('/dev/gpiochip0', 17, active_high=True)
         else:
             raise ValueError('Unknown heartbeat output')
@@ -1391,7 +1398,7 @@ class Diagnostic:
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
         return {
-            "version": "1.0.0-alpha.23",
+            "version": "1.0.0-alpha.24",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,

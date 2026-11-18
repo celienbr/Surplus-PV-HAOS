@@ -1,3 +1,14 @@
+# 1.0.0-alpha.24 — candidat expérimental
+
+Diagnostic DAC et âge du dernier ACK améliorés ; en AUTO une commande stable
+est revérifiée lorsqu'une mesure nouvelle et valide le permet. Une erreur I²C
+inhibe la commande, mémorise le défaut et exige une reprise explicite à zéro.
+L'affichage heartbeat et les reconnexions SSE exigent une impulsion logicielle
+récente. La détection dépend d'une transaction I²C : dix secondes sont un seuil
+d'éligibilité, pas un délai garanti. Un ACK ne mesure ni l'identité du composant
+ni le courant analogique ; l'interface ne mesure pas électriquement GPIO17.
+Aucun essai physique nouveau ; B01–B10 restent ouvertes.
+
 # 1.0.0-alpha.23 — candidat en validation
 
 Démarrage du heartbeat configuré sans mode AUTO mémorisé, après préparation DAC à zéro. Aucun ancien ordre de chauffe n'est restauré par cette opération. Contrôles sur doubles ; validation matérielle et publication en attente.

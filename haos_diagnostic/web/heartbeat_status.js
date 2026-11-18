@@ -35,9 +35,9 @@
   if (Number.isFinite(data.width_s) && data.width_s > 0) width = data.width_s;
   if (data.missed) lost = true;
   const limit = period === null || width === null ? null : period + Math.max(1, width * 2);
-  const age = Object.prototype.hasOwnProperty.call(data, 'pulse_age_s') ? data.pulse_age_s : 0;
-  const timestamp = data.pulse ? Date.parse(data.pulse.at) : null;
-  const wallAge = timestamp === null ? 0 : (Date.now() - timestamp) / 1000;
+  const age = data.pulse_age_s;
+  const timestamp = data.pulse && typeof data.pulse.at === 'string' ? Date.parse(data.pulse.at) : NaN;
+  const wallAge = (Date.now() - timestamp) / 1000;
   if (lost || data.state !== 'NORMAL' || limit === null || !Number.isFinite(age) || age < 0 || age > limit || !Number.isFinite(wallAge) || wallAge < -2 || wallAge > limit) {
    forgetPulse();
    state.textContent = lost ? 'Défaut · événements de battement perdus' :
@@ -45,13 +45,15 @@
    return;
   }
   pulseValid = true;
-  pulseDeadline = performance.now() + (limit - age) * 1000;
+  const remaining = limit - Math.max(age, wallAge, 0);
+  pulseDeadline = performance.now() + remaining * 1000;
   clearTimeout(pulseTimeout);
   pulseTimeout = setTimeout(() => {
    forgetPulse();
    state.textContent = 'Défaut · impulsion logicielle non confirmée';
-  }, (limit - age) * 1000);
+  }, remaining * 1000);
   state.textContent = labels.NORMAL;
+  last.textContent = 'Dernière impulsion logicielle : ' + new Date(timestamp).toLocaleString('fr-CH');
   extinguish();
   light.classList.add('pulse');
   timer = setTimeout(() => light.classList.remove('pulse'), 100);
