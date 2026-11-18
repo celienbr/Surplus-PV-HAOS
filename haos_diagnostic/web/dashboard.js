@@ -97,17 +97,19 @@ function render(p){
 
 function renderApplicationHealth(p){
  const health=p.application_health||{}, rows=health.alarms||[], heartbeat=p.heartbeat||{};
- const labels={OK:'OK',DEFAUT:'DÉFAUT',NON_VERIFIABLE:'Non vérifiable',DESACTIVE:'Désactivé'};
+ const labels={OK:'OK',DEFAUT:'DÉFAUT',NON_VERIFIABLE:'Non vérifiable',NON_SOLLICITE:'Non sollicité',DESACTIVE:'Désactivé'};
  const active=rows.filter(row=>row.state==='DEFAUT').map(row=>row.id);
- text('application-health-state',health.state==='ALARME'?'ALARME'+(active.length?' — '+active.join(', '):''):health.state==='OK'?'OK':'Non vérifiable');
+ text('application-health-state',health.state==='ALARME'?'ALARME'+(active.length?' — '+active.join(', '):''):health.state==='OK'?'OK':'À VÉRIFIER');
+ const important=rows.filter(row=>row.state==='DEFAUT'||row.state==='NON_VERIFIABLE');
+ text('application-action',important.map(row=>row.id+' : '+row.name+(row.state==='DEFAUT'?' — défaut':' — à vérifier')).join(' · '));
  const globalBadge=$('application-health-state'), healthPanel=$('application-health');
  if(globalBadge)globalBadge.dataset.state=health.state||'NON_VERIFIABLE';
  if(healthPanel)healthPanel.dataset.state=health.state||'NON_VERIFIABLE';
  text('application-health-mode',heartbeat.state==='DEFAUT' ?
   'Heartbeat en défaut · commande non confirmée.' :
-  health.state==='ALARME' ? 'Diagnostics dégradés · voir l’indicateur de heartbeat ci-dessous.' :
-  health.state==='OK' ? 'Diagnostics normaux · voir l’indicateur de heartbeat ci-dessous.' :
-  'Voir l’indicateur de heartbeat ci-dessous pour la fraîcheur des impulsions.');
+  health.state==='ALARME' ? 'Une intervention est nécessaire.' :
+  health.state==='OK' ? 'Aucun défaut identifié dans les fonctions surveillées.' :
+  'Une information nécessaire reste à vérifier.');
  const estimate=p.comfort_estimate;
  text('application-health-estimate',estimate?'Estimation du besoin avec hypothèse 35 °C ; ce n’est pas une mesure et elle n’autorise pas la chauffe.':'');
  const container=$('application-alarms'); if(!container)return;

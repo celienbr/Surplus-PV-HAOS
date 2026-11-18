@@ -35,6 +35,14 @@ body:has(#page-monitor){max-width:1000px;padding-bottom:35px}.value,.big,.status
 #output-mode[data-mode="AUTO"]{background:#b42318;color:#fff;border-color:#8f1c13;font-weight:800}
 #boiler-frame{display:block;width:100%;min-height:300px;border:0;overflow:hidden}
 html.embedded .head,html.embedded .bottom{display:none}
+html[data-view-mode="normal"] .diagnostic-only{display:none!important}
+html[data-view-mode="normal"] .b3-top{grid-template-columns:minmax(0,1fr)}
+/* The embedded boiler repeats the dashboard's network and temperature KPIs. */
+html.embedded[data-view-mode="normal"] .boiler-kpis,
+html.embedded[data-view-mode="normal"] .boiler-page>section:first-of-type>.notice,
+html.embedded[data-view-mode="normal"] .boiler-page>section:first-of-type>.statusline{display:none}
+.view-choice{margin-top:6px}
+#application-action:empty{display:none}
 html.embedded .app{padding:0;max-width:none}
 .heartbeat-light { display: inline-block; width: 2rem; height: 2rem; margin-left: .4rem; vertical-align: middle; }
 .heartbeat-light svg { width: 100%; height: 100%; fill: none; stroke-linecap: round; stroke-linejoin: round; }

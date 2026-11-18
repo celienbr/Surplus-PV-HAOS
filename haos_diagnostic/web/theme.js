@@ -16,3 +16,46 @@
  addEventListener('storage',e=>{if(e.key===KEY){selected=valid.has(e.newValue)?e.newValue:'auto';refresh();}});
  window.SurplusTheme={colors,resolve:resolved,set:update,selected:()=>selected};
 })();
+
+/* Presentation only: per-tab navigation state, reset on reload or new tab. */
+(function(){
+ const KEY='surplus-pv-view-session';
+ const embedded=document.documentElement.classList.contains('embedded');
+ let mode='normal';
+ try {
+  if(embedded && parent!==window && parent.SurplusViewMode) mode=parent.SurplusViewMode.selected();
+  else if(!embedded){
+   const navigation=performance.getEntriesByType('navigation')[0];
+   const referrer=document.referrer ? new URL(document.referrer) : null;
+   const appRoot=new URL('.',location.href).pathname;
+   const fromApp=referrer && referrer.origin===location.origin && referrer.pathname.startsWith(appRoot);
+   if((navigation && navigation.type==='reload') || !fromApp || window.opener) sessionStorage.removeItem(KEY);
+   mode=sessionStorage.getItem(KEY)==='diagnostic'?'diagnostic':'normal';
+  }
+ } catch(_){}
+ function apply(value, persist=true){
+  mode=value==='diagnostic'?'diagnostic':'normal';
+  document.documentElement.dataset.viewMode=mode;
+  document.querySelectorAll('[data-view-picker]').forEach(el=>el.value=mode);
+  if(persist&&!embedded)try{sessionStorage.setItem(KEY,mode);}catch(_){}
+  window.dispatchEvent(new CustomEvent('surplus-view-change',{detail:mode}));
+ }
+ window.SurplusViewMode={selected:()=>mode,set:apply};
+ apply(mode,false);
+ if(embedded){
+  try {parent.addEventListener('surplus-view-change',event=>apply(event.detail,false));}catch(_){}
+  return;
+ }
+ function setup(){
+  const slot=document.getElementById('theme-slot');if(!slot)return;
+  const bar=document.createElement('div');bar.className='theme-choice view-choice';
+  const label=document.createElement('label');label.htmlFor='view-picker';label.textContent='Affichage';
+  const picker=document.createElement('select');picker.id='view-picker';picker.dataset.viewPicker='';
+  picker.setAttribute('aria-label','Mode d’affichage');
+  for(const [value,title] of [['normal','NORMAL'],['diagnostic','DIAGNOSTIC']]){
+   const option=document.createElement('option');option.value=value;option.textContent=title;picker.append(option);
+  }
+  picker.value=mode;picker.onchange=()=>apply(picker.value);bar.append(label,picker);slot.append(bar);
+ }
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup);else setup();
+})();

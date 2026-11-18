@@ -20,7 +20,8 @@ from .auto_target import resolve_auto_target
 from .comfort_planner import plan_comfort
 from .ha_client import HomeAssistantClient
 from .gplugk import _read_kw_state, net_grid_power_w, assess_grid_reading
-from .forecast_adapter import build_weather_preview
+from .forecast_adapter import build_weather_preview, outdoor_forecast_c
+from .open_meteo_weather import read_tomorrow_from_ha
 from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .predictive_target import predictive_target
 from .history_store import HistoryStore, parse_time
@@ -310,6 +311,7 @@ class Diagnostic:
         if self.dac_fault_latched:
             self.alarms.observe('A002', 'DEFAUT')
         self.startup_lock = Lock()
+        self.dac_startup_self_test = {'result': 'NOT_RUN', 'at': None}
         self.startup_auto_pending = False
         self.startup_reason = None
         self.startup_watchdog_started = False
@@ -730,7 +732,14 @@ class Diagnostic:
                                     evidence_monotonic=i2c.get('end_ns', 0) / 1e9,
                                     evidence_ttl=self.options['max_age_seconds'])
             elif output['mode'] not in ('AUTO_REEL', 'MANUEL_REEL') and not output['error']:
-                self.alarms.observe('A002', 'NON_VERIFIABLE', now)
+                i2c = output.get('last_i2c') or {}
+                test = self.dac_startup_self_test
+                detail = 'DAC non sollicité ; communication non vérifiée en continu.'
+                if test['result'] == 'OK':
+                    detail += ' Dernier autotest à zéro réussi : ' + test['at'] + '.'
+                self.alarms.observe('A002', 'NON_SOLLICITE', now, detail=detail,
+                                    evidence_monotonic=(i2c['end_ns'] / 1e9 if i2c.get('result') == 'ACK' else None),
+                                    evidence_ttl=self.options['max_age_seconds'])
             if timing is not None:
                 timing['i2c'] = observation_i2c
                 timing['outcome'] = ('ERROR' if self.latest['control_state'] == 'FAULT' else
@@ -1076,6 +1085,36 @@ class Diagnostic:
         elif self.requested_mode == 'MANUEL':
             self.restore_status = 'Mode mémorisé : MANUEL — reprise en attente ; sélectionner MANUEL et confirmer la commande'
 
+    def startup_dac_self_test(self):
+        """One safe-zero initialization before workers and restoration start.
+
+        A latched fault is never cleared by a diagnostic. No command, GPIO or
+        watchdog operation is performed here; the output lock serializes I²C.
+        """
+        with self.startup_lock, self.output.lock:
+            if self.dac_startup_self_test['result'] != 'NOT_RUN':
+                return self.dac_startup_self_test
+            if (self.dac_fault_latched or self.startup_auto_pending or
+                    self.output.mode != 'AUTO' or self.output.enabled or self.output.dac.ready):
+                self.dac_startup_self_test = {'result': 'SKIPPED', 'at': None}
+                return self.dac_startup_self_test
+            self.output._initialize()
+            stamp = datetime.now(timezone.utc).isoformat()
+            if self.output.error:
+                self.dac_startup_self_test = {'result': 'ERROR', 'at': stamp}
+                self._latch_dac_fault()
+            else:
+                self.output.dac.close()
+                self.dac_startup_self_test = {'result': 'OK', 'at': stamp}
+            if self.history_store is not None:
+                try:
+                    self.history_store.log(datetime.fromisoformat(stamp),
+                        'INFO' if self.dac_startup_self_test['result'] == 'OK' else 'WARNING',
+                        'DAC_SELF_TEST', 'Initialisation à zéro : ' + self.dac_startup_self_test['result'])
+                except (OSError, sqlite3.Error):
+                    LOG.exception('Impossible de journaliser l’autotest DAC')
+            return self.dac_startup_self_test
+
     def startup_once(self):
         """Advance startup with safe zero, configured watchdog and live inputs."""
         with self.startup_lock:
@@ -1170,6 +1209,7 @@ class Diagnostic:
             if self.startup_reason:
                 status['reason'] = self.startup_reason
         status['requested_mode'] = self.requested_mode
+        status['startup_self_test'] = dict(self.dac_startup_self_test)
         if self.restore_status and self.requested_mode == 'AUTO':
             if (status['mode'] == 'AUTO_REEL' and not status['auto_suspended'] and not status['error']
                     and self.heartbeat.snapshot()['state'] == 'NORMAL'):
@@ -1340,18 +1380,41 @@ class Diagnostic:
                 solar_valid = False
         current = profile.get('current_temperature_c')
         current_error = profile.get('current_temperature_error')
+        # PAC needs today's integrated hourly model and its independently
+        # validated tomorrow source. The comfort planner itself consumes a
+        # heater budget (and falls back conservatively when unavailable), not
+        # a full 48-hour outdoor-temperature series.
+        pac_reason = None
+        if options['pac_enabled']:
+            try:
+                if options['pac_temperature_source'] == 'open_meteo':
+                    read_tomorrow_from_ha(self.client, options['pac_weather_entity'], now,
+                                          options['pac_timezone'])
+                else:
+                    outdoor_forecast_c(self.client.get_state(options['pac_forecast_temp_entity']), now)
+            except (ValueError, OSError, TypeError, KeyError, AttributeError, TimeoutError) as exc:
+                pac_reason = 'prévision PAC de demain insuffisante : ' + str(exc)[:140]
+            if profile.get('pac_today_remaining_kwh') is None:
+                pac_reason = (pac_reason + ' ; ' if pac_reason else '') + 'prévision PAC du reste du jour incomplète'
         weather_state = ('DESACTIVE' if not weather_needed else
-                         'OK' if meteo == 'OK' and current is not None else
-                         'DEFAUT' if meteo == 'UNAVAILABLE' else
-                         'NON_VERIFIABLE')
+                         'DEFAUT' if current is None and (current_error or meteo == 'UNAVAILABLE') else
+                         'NON_VERIFIABLE' if current is None else
+                         ('DEFAUT' if meteo == 'UNAVAILABLE' else 'NON_VERIFIABLE') if pac_reason else
+                         'OK')
         detail = ('Température actuelle disponible ; ' if current is not None else
                   'Température actuelle indisponible ; ' if current_error else 'Température actuelle non vérifiée ; ')
         detail += {'OK': 'prévisions horaires complètes.', 'PARTIAL': 'prévisions horaires partielles.',
                    'UNAVAILABLE': 'prévisions horaires indisponibles.'}.get(meteo, 'prévisions horaires non vérifiées.')
-        self.alarms.observe('A005', weather_state, now, detail=detail if weather_needed else None)
-        self.alarms.observe('A006', 'DESACTIVE' if not solar_needed else
-                            'OK' if solar_valid else
-                            'NON_VERIFIABLE' if solar in (None, 'WAITING') else 'DEFAUT', now)
+        if pac_reason:
+            detail += ' ' + pac_reason + '.'
+        # A slow forecast request must not publish an obsolete configuration.
+        with self.lock:
+            if options != self.options:
+                return self.profile
+            self.alarms.observe('A005', weather_state, now, detail=detail if weather_needed else None)
+            self.alarms.observe('A006', 'DESACTIVE' if not solar_needed else
+                                'OK' if solar_valid else
+                                'NON_VERIFIABLE' if solar in (None, 'WAITING') else 'DEFAUT', now)
         if self.history_store is not None:
             try:
                 # Archive at most one as-issued forecast per hour.
@@ -1376,8 +1439,14 @@ class Diagnostic:
         except (OSError, ValueError, TypeError, KeyError, AttributeError, TimeoutError) as exc:
             temperature, error = None, str(exc)[:180]
         with self.lock:
+            previous_error = self.profile.get('current_temperature_error')
             self.profile["current_temperature_c"] = temperature
             self.profile["current_temperature_error"] = error
+            weather_needed = self.options['weather_enabled'] or self.options['pac_enabled']
+        if weather_needed and error:
+            self.alarms.observe('A005', 'DEFAUT', detail='Température actuelle indisponible : ' + error)
+        if weather_needed and bool(previous_error) != bool(error):
+            self.profile_wake.set()
 
     def profile_loop(self, stop: Event) -> None:
         """Refresh forecasts slowly and live weather without blocking gPlugK."""
@@ -1397,8 +1466,30 @@ class Diagnostic:
 
     def snapshot(self) -> dict:
         # Only invoke this under the lock, or from HTTP with lock held.
+        output = self.output_status()
+        heartbeat = self.heartbeat.snapshot()
+        health = self.alarms.snapshot()
+        dac_alarm = next(row for row in health['alarms'] if row['id'] == 'A002')
+        physical_mode = output['mode'] in ('AUTO_REEL', 'MANUEL_REEL')
+        if self.dac_fault_latched or output['error']:
+            dac_alarm.update(state='DEFAUT', description='Défaut DAC mémorisé ou erreur I²C ; récupération explicite requise.')
+        elif physical_mode and dac_alarm['state'] != 'DEFAUT':
+            age = output.get('last_ack_age_s')
+            if age is None or not 0 <= age <= self.options['max_age_seconds']:
+                dac_alarm.update(state='NON_VERIFIABLE', description='Commande physique active : ACK I²C récent absent ; courant physique non mesuré.')
+            elif dac_alarm['state'] == 'NON_SOLLICITE':
+                dac_alarm.update(state='OK', description='ACK I²C récent ; courant physique non mesuré.')
+        states = {row['state'] for row in health['alarms']}
+        reasons = []
+        if heartbeat['state'] == 'DEFAUT':
+            reasons.append('Heartbeat en défaut')
+        elif physical_mode and (heartbeat['state'] != 'NORMAL' or heartbeat.get('driver') != 'GPIO_REEL'):
+            reasons.append('Heartbeat requis non confirmé')
+        health['state'] = ('ALARME' if 'DEFAUT' in states or heartbeat['state'] == 'DEFAUT' else
+                           'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
+        health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.24",
+            "version": "1.0.0-alpha.25",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1412,9 +1503,9 @@ class Diagnostic:
             "auto_applied": dict(self.auto_applied) if self.auto_applied else None,
             "forecast_configuration_migrated": bool(self.migrated_forecast_solar_entry_id),
             "physical_outputs": "GP8600_COMMANDE_NON_VERIFIEE",
-            "output_control": self.output_status(),
-            "heartbeat": self.heartbeat.snapshot(),
-            "application_health": self.alarms.snapshot(),
+            "output_control": output,
+            "heartbeat": heartbeat,
+            "application_health": health,
             "options": dict(self.options),
             **self.latest,
             "history": list(self.history),
@@ -1766,6 +1857,7 @@ def main():
                                                       "/data/surplus_pv_user_settings.json"))
     diag.start_record_worker()
     stop = Event()
+    diag.startup_dac_self_test()
     diag.restore_requested_mode()
     def thermal_loop():
         while not stop.is_set():

@@ -1,3 +1,9 @@
+# 1.0.0-alpha.25 — candidat en validation
+
+Autotest DAC au démarrage uniquement à zéro ; état non sollicité distinct,
+prévisions météo évaluées selon les fonctions actives et affichage NORMAL /
+DIAGNOSTIC. Aucun courant analogique ou état électrique n’est mesuré.
+
 # 1.0.0-alpha.24 — candidat expérimental
 
 Diagnostic DAC et âge du dernier ACK améliorés ; en AUTO une commande stable
