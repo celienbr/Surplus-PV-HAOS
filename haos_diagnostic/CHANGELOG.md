@@ -1,3 +1,8 @@
+# 1.0.0-alpha.27 — appoint confort AUTO
+
+L’appoint réseau autorisé et dû est indépendant de la disponibilité gPlugK.
+La rampe utilise l’horloge monotone et les sécurités restent requises.
+
 # 1.0.0-alpha.26 — récupération automatique
 
 - A002 inhibe les modes physiques et le heartbeat sur erreur I²C. Trois essais

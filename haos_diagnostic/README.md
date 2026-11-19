@@ -1,18 +1,21 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.26
+# Surplus PV — Home Assistant OS 1.0.0-alpha.27
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.25
+## Mise à jour depuis Alpha.26
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.26, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.27, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
+
+L’appoint réseau autorisé et dû peut fonctionner sans gPlugK. Le défaut du
+compteur reste indiqué. Les limites et la rampe restent actives.
 
 Le tableau de bord indique six diagnostics indépendants. Une estimation de
 confort à 35 °C reste indicative et ne peut autoriser la chauffe. Un défaut DAC
@@ -84,7 +87,13 @@ un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
 quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Le format v3 et la base SQLite sont conservés.
 
-## Retour arrière
+## Retour arrière vers Alpha.26
+
+Demander ARRÊT, arrêter l’application et sauvegarder hors du Pi les données
+actuelles, dont SQLite, WAL/SHM et préférences. Conserver séparément les
+données acquises sous Alpha.27. Restaurer le code Alpha.26 de la même
+application sans désinstallation, vérifier ARRÊT et réconcilier les données
+récentes avant toute restauration. Le retour arrière réel reste à valider.
 
 Pour revenir d’Alpha.26 à Alpha.25, demander ARRÊT et vérifier qu’il est
 enregistré. Arrêter l’application. Sauvegarder l’application et tout

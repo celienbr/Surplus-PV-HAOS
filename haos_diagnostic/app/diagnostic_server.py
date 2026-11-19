@@ -333,6 +333,7 @@ class Diagnostic:
         self.stop_next_attempt = 0.0
         self.startup_temperature_after = datetime.now(timezone.utc)
         self.auto_meter_after = None
+        self._backup_next_step = None
         self.watchdog_profile = None
         self.watchdog_opening = False
         self.calibration = calibration_store
@@ -436,6 +437,7 @@ class Diagnostic:
             self.auto_applied = None
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
+                self._backup_next_step = None
                 if not self.output.snapshot()['auto_suspended']:
                     self._last_meter_report = None
                     self._last_meter_reports = None
@@ -444,80 +446,95 @@ class Diagnostic:
             # dependency may postpone the fast measurement / thermal gate.
             try:
                 auto_calculated = False
-                if self.client is None:
-                    raise RuntimeError("Home Assistant API unavailable: no Supervisor token")
                 measurement_status = "OK"
                 measurement_reason = "Current HA reports"
                 communication_healthy = True
                 measurement_coverage = "TWO_RECENT"
-                if hasattr(self.client, "read_gplugk_states"):
-                    raw_pi, raw_po = self.client.read_gplugk_states(
-                        self.options["pi_entity"], self.options["po_entity"])
-                    if isinstance(self.client, AsyncControlInputs):
-                        grid_generation = self.client.last_grid_read_generation
-                    if not injected_clock:
-                        now = datetime.now(timezone.utc)
-                    self.sensor_diagnostics = {
-                        "pi": describe_sensor(raw_pi, self.options["pi_entity"],
-                                              now, self.options["max_age_seconds"]),
-                        "po": describe_sensor(raw_po, self.options["po_entity"],
-                                              now, self.options["max_age_seconds"]),
-                    }
-                    fresh_sensors = [s for s in self.sensor_diagnostics.values() if s['health'] == 'FRESH']
-                    if fresh_sensors:
-                        meter_observation = {
-                            'meter_w': None, 'communication_healthy': True,
-                            'coverage': 'TWO_RECENT' if len(fresh_sensors) == 2 else 'ONE_RECENT',
-                            'reason': 'Communication gPlugK récente ; bilan à vérifier',
-                            'freshness_report': min(datetime.fromisoformat(s['reported_at']) for s in fresh_sensors),
+                try:
+                    if self.client is None:
+                        raise RuntimeError("Home Assistant API unavailable: no Supervisor token")
+                    if hasattr(self.client, "read_gplugk_states"):
+                        raw_pi, raw_po = self.client.read_gplugk_states(
+                            self.options["pi_entity"], self.options["po_entity"])
+                        if isinstance(self.client, AsyncControlInputs):
+                            grid_generation = self.client.last_grid_read_generation
+                        if not injected_clock:
+                            now = datetime.now(timezone.utc)
+                        self.sensor_diagnostics = {
+                            "pi": describe_sensor(raw_pi, self.options["pi_entity"],
+                                                  now, self.options["max_age_seconds"]),
+                            "po": describe_sensor(raw_po, self.options["po_entity"],
+                                                  now, self.options["max_age_seconds"]),
                         }
-                    assessment = assess_grid_reading(
-                        raw_pi, raw_po, now, self.options["max_age_seconds"])
-                    meter_w = assessment["grid_w"]
-                    measurement_status = assessment["status"]
-                    measurement_reason = assessment["reason"]
-                    communication_healthy = assessment["communication_healthy"]
-                    measurement_coverage = assessment["coverage"]
-                    ages = [sensor["age_s"] for sensor in self.sensor_diagnostics.values()
-                            if sensor and sensor["health"] == "FRESH"]
-                    age = max(ages) if ages else None
-                    reports = [datetime.fromisoformat(s["reported_at"])
-                               for s in self.sensor_diagnostics.values()
-                               if s and s["health"] == "FRESH"]
-                    meter_report = max(reports) if reports else None
-                    freshness_report = min(reports) if reports else None
-                    meter_reports = tuple(_read_kw_state(raw, entity).measured_at for raw, entity in (
-                        (raw_pi, self.options['pi_entity']), (raw_po, self.options['po_entity'])))
-                    meter_fresh = tuple(self.sensor_diagnostics[name]['health'] == 'FRESH'
-                                        for name in ('pi', 'po'))
-                else:
-                    # Backward-compatible pure unit-test client.
-                    self.sensor_diagnostics = {"pi": None, "po": None}
-                    measured = self.client.read_gplugk_grid_w(
-                        self.options["pi_entity"], self.options["po_entity"])
-                    if isinstance(self.client, AsyncControlInputs):
-                        grid_generation = self.client.last_grid_read_generation
-                    if not injected_clock:
-                        now = datetime.now(timezone.utc)
-                    age = (now - measured.measured_at).total_seconds()
-                    if not measured.valid(now, self.options["max_age_seconds"]):
-                        raise ValueError(f"gPlugK data too old or future-dated ({age:.0f} s)")
-                    meter_w = measured.value
-                    meter_report = measured.measured_at
-                    freshness_report = measured.measured_at
-                    meter_reports = (meter_report,)
-                    meter_fresh = (True,)
+                        fresh_sensors = [s for s in self.sensor_diagnostics.values() if s['health'] == 'FRESH']
+                        if fresh_sensors:
+                            meter_observation = {
+                                'meter_w': None, 'communication_healthy': True,
+                                'coverage': 'TWO_RECENT' if len(fresh_sensors) == 2 else 'ONE_RECENT',
+                                'reason': 'Communication gPlugK récente ; bilan à vérifier',
+                                'freshness_report': min(datetime.fromisoformat(s['reported_at']) for s in fresh_sensors),
+                            }
+                        assessment = assess_grid_reading(
+                            raw_pi, raw_po, now, self.options["max_age_seconds"])
+                        meter_w = assessment["grid_w"]
+                        measurement_status = assessment["status"]
+                        measurement_reason = assessment["reason"]
+                        communication_healthy = assessment["communication_healthy"]
+                        measurement_coverage = assessment["coverage"]
+                        ages = [sensor["age_s"] for sensor in self.sensor_diagnostics.values()
+                                if sensor and sensor["health"] == "FRESH"]
+                        age = max(ages) if ages else None
+                        reports = [datetime.fromisoformat(s["reported_at"])
+                                   for s in self.sensor_diagnostics.values()
+                                   if s and s["health"] == "FRESH"]
+                        meter_report = max(reports) if reports else None
+                        freshness_report = min(reports) if reports else None
+                        meter_reports = tuple(_read_kw_state(raw, entity).measured_at for raw, entity in (
+                            (raw_pi, self.options['pi_entity']), (raw_po, self.options['po_entity'])))
+                        meter_fresh = tuple(self.sensor_diagnostics[name]['health'] == 'FRESH'
+                                            for name in ('pi', 'po'))
+                    else:
+                        # Backward-compatible pure unit-test client.
+                        self.sensor_diagnostics = {"pi": None, "po": None}
+                        measured = self.client.read_gplugk_grid_w(
+                            self.options["pi_entity"], self.options["po_entity"])
+                        if isinstance(self.client, AsyncControlInputs):
+                            grid_generation = self.client.last_grid_read_generation
+                        if not injected_clock:
+                            now = datetime.now(timezone.utc)
+                        age = (now - measured.measured_at).total_seconds()
+                        if not measured.valid(now, self.options["max_age_seconds"]):
+                            raise ValueError(f"gPlugK data too old or future-dated ({age:.0f} s)")
+                        meter_w = measured.value
+                        meter_report = measured.measured_at
+                        freshness_report = measured.measured_at
+                        meter_reports = (meter_report,)
+                        meter_fresh = (True,)
 
-                # Preserve the meter diagnosis independently of later thermal
-                # or planner failures; it must still be recent when displayed.
-                meter_observation = {
-                    'meter_w': meter_w, 'communication_healthy': communication_healthy,
-                    'coverage': measurement_coverage, 'reason': measurement_reason,
-                    'freshness_report': freshness_report,
-                }
-                self.alarms.observe('A004', 'OK' if communication_healthy and meter_w is not None else
-                                    'NON_VERIFIABLE' if communication_healthy else 'DEFAUT', now,
-                                    evidence=meter_reports, evidence_ttl=self.options['max_age_seconds'])
+                    # Preserve the meter diagnosis independently of later thermal
+                    # or planner failures; it must still be recent when displayed.
+                    meter_observation = {
+                        'meter_w': meter_w, 'communication_healthy': communication_healthy,
+                        'coverage': measurement_coverage, 'reason': measurement_reason,
+                        'freshness_report': freshness_report,
+                    }
+                    self.alarms.observe('A004', 'OK' if communication_healthy and meter_w is not None else
+                                        'NON_VERIFIABLE' if communication_healthy else 'DEFAUT', now,
+                                        evidence=meter_reports, evidence_ttl=self.options['max_age_seconds'])
+
+                except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
+                    # Counter health is independent of the thermal backup.
+                    meter_w = None
+                    measurement_status = 'FAULT'
+                    measurement_reason = str(exc)[:260]
+                    communication_healthy = bool(meter_observation and meter_observation['communication_healthy'])
+                    measurement_coverage = meter_observation['coverage'] if communication_healthy else 'NONE'
+                    meter_report = freshness_report = None
+                    meter_reports = ()
+                    meter_fresh = ()
+                    age = None
+                    grid_generation = None
+                    self.alarms.observe('A004', 'DEFAUT', now)
 
                 temperature_invalid = True
                 failure_stage = 'thermal'
@@ -551,15 +568,21 @@ class Diagnostic:
                     self.alarms.observe('A003', 'OK', now, evidence=temperature.measured_at)
                 failure_stage = 'calculation'
                 # Recheck meter freshness after any slow temperature request.
-                if freshness_report is None or not -2 <= (now-freshness_report).total_seconds() <= self.options["max_age_seconds"]:
-                    raise ValueError("Meter report stale after acquisition")
+                meter_usable = (meter_w is not None and freshness_report is not None
+                                and -2 <= (now-freshness_report).total_seconds() <= self.options["max_age_seconds"])
+                if not meter_usable:
+                    grid_generation = None
                 if self._last_poll_at is not None and now < self._last_poll_at:
                     raise ValueError("Clock moved backwards; awaiting a new valid cycle")
                 self._last_poll_at = now
-                if self._last_meter_reports is not None and any(
+                if meter_usable and self._last_meter_reports is not None and any(
                         current < previous for current, previous in zip(meter_reports, self._last_meter_reports)):
-                    raise ValueError("Meter report moved backwards")
-                new_sample = (self._last_meter_reports is None or any(
+                    meter_usable = False
+                    grid_generation = None
+                    measurement_status = 'FAULT'
+                    measurement_reason = 'Meter report moved backwards'
+                    self.alarms.observe('A004', 'DEFAUT', now)
+                new_sample = meter_usable and (self._last_meter_reports is None or any(
                     fresh and current > previous for current, previous, fresh
                     in zip(meter_reports, self._last_meter_reports, meter_fresh)))
                 if new_sample:
@@ -579,21 +602,62 @@ class Diagnostic:
                 self.comfort_estimate = None
                 self.comfort = plan_comfort(self.options, now, water_c, self.profile)
                 self.comfort["temperature_source"] = self.temperature_source
+                backup = self.comfort['backup_power_w']
+                backup_due = (self.options['grid_backup_enabled'] and backup > 0
+                              and water_c < self.options['weather_min_c'])
+                backup_tick = False
                 # Regulate only when real AUTO is selected. The meter already
                 # includes the current boiler load; never add an invented load.
                 automatic = self.output.snapshot()['mode'] == 'AUTO_REEL'
                 if not automatic:
+                    self._backup_next_step = None
                     self.regulator.invalid_data('Output not in AUTO')
-                    decision = Decision(0, 'STOPPED' if self.output.snapshot()['mode'] == 'AUTO' else 'MANUAL',
+                    decision = Decision(0, ('FAULT' if measurement_status == 'FAULT' else 'STOPPED') if self.output.snapshot()['mode'] == 'AUTO' else 'MANUAL',
                                         'No automatic output requested')
+                elif backup_due:
+                    # Time-based ramp is driven only by the control worker,
+                    # never by meter updates or API requests. No catch-up burst.
+                    failure_stage = 'auto_calculation'
+                    target = resolve_auto_target(self.options, self.weather, self.predictive, now)
+                    limit = target['target_c']
+                    if limit is None:
+                        raise ValueError('Consigne calculée invalide ; AUTO inhibé')
+                    old_command = self.regulator.command_w
+                    decision = self.regulator.step(0, water_c, temp_limit_c=limit)
+                    self.auto_applied = {**target, 'at': now.isoformat()}
+                    if decision.state == 'AUTO_READY':
+                        # Historical simulations supply their own virtual
+                        # timeline; production always uses monotonic time.
+                        clock = now.timestamp() if injected_clock else time.monotonic()
+                        if self._backup_next_step is None or clock >= self._backup_next_step:
+                            backup_tick = True
+                            self._backup_next_step = clock + self.options['sample_seconds']
+                        gap_w = ((self.options['weather_min_c'] - water_c)
+                                 * self.options['weather_volume_l'] * 1.163
+                                 * 3600 / self.options['sample_seconds'])
+                        total = min(backup, gap_w, self.options['max_power_w'],
+                                    old_command + (300 if backup_tick else 0))
+                        self.regulator.command_w = total
+                        decision = Decision(total, 'COMFORT_BACKUP',
+                                            'Appoint confort indépendant du compteur')
+                    auto_calculated = True
+                    new_sample = backup_tick
+                    grid_generation = None
+                elif not meter_usable:
+                    self._backup_next_step = None
+                    decision = self.regulator.invalid_data('Données réseau indisponibles')
                 elif self.auto_meter_after is not None and (
                         not all(meter_fresh) or any(stamp <= self.auto_meter_after for stamp in meter_reports)):
+                    self._backup_next_step = None
                     decision = self.regulator.invalid_data('Attente de nouvelles mesures gPlugK')
                 elif measurement_status == 'POWER_UNKNOWN':
+                    self._backup_next_step = None
                     decision = self.regulator.invalid_data('Net power ambiguous')
                 elif measurement_coverage == 'ONE_RECENT' and meter_w > 0:
+                    self._backup_next_step = None
                     decision = self.regulator.invalid_data('Incomplete import measurement: heating inhibited')
                 else:
+                    self._backup_next_step = None
                     failure_stage = 'auto_calculation'
                     old_command = self.regulator.command_w
                     target = resolve_auto_target(self.options, self.weather, self.predictive, now)
@@ -609,25 +673,13 @@ class Diagnostic:
                     if decision.state == 'AUTO_READY':
                         surplus_command = decision.command_w if new_sample else old_command
                         available = old_command - meter_w - reserve
-                        surplus_command = min(surplus_command, max(0, available))
-                        backup = self.comfort['backup_power_w']
-                        backup_ok = (self.options['grid_backup_enabled'] and backup > 0
-                                     and water_c < self.options['weather_min_c'])
-                        total = surplus_command
-                        if backup_ok:
-                            ramped = (min(backup, old_command+300) if new_sample
-                                      else min(backup, old_command))
-                            gap_w = ((self.options['weather_min_c']-water_c)
-                                     * self.options['weather_volume_l'] * 1.163
-                                     * 3600 / self.options['sample_seconds'])
-                            total = max(total, min(ramped, gap_w))
-                        self.regulator.command_w = min(self.options['max_power_w'], total)
-                        decision = Decision(self.regulator.command_w,
-                                            'COMFORT_BACKUP' if backup_ok else decision.state,
+                        self.regulator.command_w = min(surplus_command, max(0, available))
+                        decision = Decision(self.regulator.command_w, decision.state,
                                             'Automatic demand calculated from valid measurements')
                     auto_calculated = True
-                self._last_meter_report = meter_report
-                self._last_meter_reports = meter_reports
+                if meter_usable:
+                    self._last_meter_report = meter_report
+                    self._last_meter_reports = meter_reports
                 self.comfort["gate_state"] = decision.state
                 if self.auto_calculation_fault and not auto_calculated:
                     self.alarms.observe('A001', 'NON_VERIFIABLE' if automatic else 'NON_SOLLICITE', now)
@@ -637,7 +689,7 @@ class Diagnostic:
                 self.comfort["applied_boiler_w"] = round(decision.command_w)
                 self.latest = {
                     "status": measurement_status,
-                    "error": None,
+                    "error": measurement_reason if measurement_status == 'FAULT' else None,
                     "data_quality": measurement_reason,
                     "communication_healthy": communication_healthy,
                     "measurement_coverage": measurement_coverage,
@@ -715,6 +767,9 @@ class Diagnostic:
                     hb = self.heartbeat.snapshot()
                     auto_healthy = auto_healthy and hb['state'] == 'NORMAL' and hb['driver'] == 'GPIO_REEL'
                 auto_healthy = auto_healthy and not (self.dac_fault_latched or self.shutdown_event.is_set())
+                if not auto_healthy and self.output.snapshot()['mode'] == 'AUTO_REEL':
+                    self.regulator.invalid_data('AUTO safety gate unavailable')
+                    self._backup_next_step = None
                 if isinstance(self.client, AsyncControlInputs) and grid_generation is not None:
                     # Publishing a newer cache entry and committing a command
                     # are serialized. A superseded calculation fails closed.
@@ -763,7 +818,8 @@ class Diagnostic:
             with self.output.lock:
                 output = self.output.snapshot()
                 if (output['mode'] == 'AUTO_REEL' and output['revision'] == generation
-                        and auto_healthy and not output['auto_suspended'] and not output['error']):
+                        and auto_healthy and self.latest['control_state'] != 'COMFORT_BACKUP'
+                        and not output['auto_suspended'] and not output['error']):
                     self.auto_meter_after = None
             if output['error'] or output['dac'].get('communication') == 'FAULT':
                 self._latch_dac_fault()
@@ -1392,7 +1448,8 @@ class Diagnostic:
         status = self.output.snapshot()
         waiting = self.requested_mode in ('AUTO', 'MANUEL') and (
             self.resume_pending or self.dac_fault_latched
-            or (self.requested_mode == 'AUTO' and self.auto_meter_after is not None)
+            or (self.requested_mode == 'AUTO' and self.auto_meter_after is not None
+                and self.latest.get('control_state') != 'COMFORT_BACKUP')
             or (self.requested_mode == 'MANUEL' and status['mode'] != 'MANUEL_REEL')
         )
         if waiting:
@@ -1688,7 +1745,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.26",
+            "version": "1.0.0-alpha.27",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,

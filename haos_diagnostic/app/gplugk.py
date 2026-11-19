@@ -67,6 +67,8 @@ def assess_grid_reading(pi_state: dict, po_state: dict, now: datetime,
     """
     pi = _read_kw_state(pi_state, "sensor.gplugk_z_pi")
     po = _read_kw_state(po_state, "sensor.gplugk_z_po")
+    if pi.measured_at > now or po.measured_at > now:
+        raise ValueError("gPlugK report is future-dated")
     pi_fresh = pi.valid(now, max_age_seconds)
     po_fresh = po.valid(now, max_age_seconds)
 
