@@ -6,7 +6,7 @@
  if(!valid.has(selected))selected='auto';
  const media=matchMedia('(prefers-color-scheme: dark)');
  const resolved=()=>selected==='auto'?(media.matches?'dark':'light'):selected;
- function colors(){const s=getComputedStyle(document.documentElement),get=k=>s.getPropertyValue('--'+k).trim();return{background:get('chart-bg'),grid:get('chart-grid'),ticks:get('chart-tick'),solar:get('solar-chart'),pac:get('pac-chart'),surplus:get('surplus-chart'),heater:get('heater-chart'),temperature:get('temp-chart'),target:get('target-chart'),network:get('network-chart')};}
+ function colors(){const s=getComputedStyle(document.documentElement),get=k=>s.getPropertyValue('--'+k).trim();return{background:get('chart-bg'),grid:get('chart-grid'),ticks:get('chart-tick'),solar:get('solar-chart'),solarActual:get('solar-actual-chart'),pac:get('pac-chart'),surplus:get('surplus-chart'),heater:get('heater-chart'),temperature:get('temp-chart'),target:get('target-chart'),network:get('network-chart')};}
  function refresh(){document.documentElement.dataset.theme=resolved();document.documentElement.style.colorScheme=resolved();document.querySelectorAll('[data-theme-picker]').forEach(e=>e.value=selected);window.dispatchEvent(new CustomEvent('surplus-theme-change'));}
  function update(value){if(!valid.has(value))return;selected=value;try{localStorage.setItem(KEY,value);}catch(_){}refresh();}
  refresh();
@@ -52,7 +52,7 @@
   const label=document.createElement('label');label.htmlFor='view-picker';label.textContent='Affichage';
   const picker=document.createElement('select');picker.id='view-picker';picker.dataset.viewPicker='';
   picker.setAttribute('aria-label','Mode d’affichage');
-  for(const [value,title] of [['normal','NORMAL'],['diagnostic','DIAGNOSTIC']]){
+  for(const [value,title] of [['normal','Normal'],['diagnostic','Diagnostic']]){
    const option=document.createElement('option');option.value=value;option.textContent=title;picker.append(option);
   }
   picker.value=mode;picker.onchange=()=>apply(picker.value);bar.append(label,picker);slot.append(bar);

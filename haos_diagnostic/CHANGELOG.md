@@ -1,3 +1,7 @@
+# 1.0.0-alpha.28 — candidat non validé
+
+Interface de supervision, jauge de commande et graphique 48 h. Les puissances demandées restent des consignes, non des mesures physiques.
+
 # 1.0.0-alpha.27 — appoint confort AUTO
 
 L’appoint réseau autorisé et dû est indépendant de la disponibilité gPlugK.

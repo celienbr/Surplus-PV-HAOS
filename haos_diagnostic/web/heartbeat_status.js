@@ -1,13 +1,17 @@
 "use strict";
 (() => {
  const light = document.getElementById('heartbeat-light');
+ const appHeart = document.getElementById('application-heartbeat-icon');
  const state = document.getElementById('heartbeat-state');
  const last = document.getElementById('heartbeat-last');
  if (!light || !state || !last) return;
  const labels = {NORMAL:'Actif', INITIALISATION:'En attente', ARRET:'Arrêté', DEFAUT:'Défaut'};
- let timer = null, freshness = null, pulseTimeout = null, lost = false;
+ let timer = null, appTimer = null, freshness = null, pulseTimeout = null, lost = false;
  let pulseValid = false, pulseDeadline = null, period = null, width = null;
- const extinguish = () => {clearTimeout(timer); light.classList.remove('pulse');};
+ const extinguish = () => {
+  clearTimeout(timer); clearTimeout(appTimer);
+  light.classList.remove('pulse'); appHeart?.classList.remove('pulse');
+ };
  const forgetPulse = () => {clearTimeout(pulseTimeout); pulseValid = false; pulseDeadline = null; extinguish();};
  const disconnected = () => {forgetPulse(); state.textContent = 'Défaut · liaison de surveillance interrompue';};
  const received = () => {clearTimeout(freshness); freshness = setTimeout(disconnected, 3500);};
@@ -56,7 +60,9 @@
   last.textContent = 'Dernière impulsion logicielle : ' + new Date(timestamp).toLocaleString('fr-CH');
   extinguish();
   light.classList.add('pulse');
+  appHeart?.classList.add('pulse');
   timer = setTimeout(() => light.classList.remove('pulse'), 100);
+  appTimer = setTimeout(() => appHeart?.classList.remove('pulse'), 380);
  });
  stream.onerror = disconnected;
  document.addEventListener('visibilitychange', () => {

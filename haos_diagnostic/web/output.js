@@ -4,13 +4,39 @@
  const el=id=>document.getElementById(id);
  const mode=el('output-mode');
  const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(4):'—';
- let state=null,token=null,busy=false,editing=false,selecting=false,queue=[],hardwareError=false;
+ let state=null,token=null,busy=false,editing=false,selecting=false,queue=[],hardwareError=false,lastDisplayMode=null;
  function selected(s){return s.startup_pending?({MANUEL:'MANUEL_REEL',AUTO:'AUTO_REEL'})[s.requested_mode]||s.mode:s.mode;}
  function paint(s,force=false){if((selecting||busy)&&!force)return;const current=selected(s);if(mode.value!==current)mode.value=current;mode.dataset.mode=current;document.querySelectorAll('[data-output-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.outputMode===current)));}
+ function paintSummary(s){
+  const requested=selected(s),manual=requested==='MANUEL_REEL',fresh=s.boiler_temperature_diagnostic?.status==='FRESH';
+  let value='—';
+  if(!s.startup_pending && !s.error && !s.dac_recovery?.pending){
+   if(s.mode==='AUTO')value='0 W';
+   else if(manual&&s.enabled===true&&Number.isFinite(s.manual_percent))value=s.manual_percent+' % DAC';
+   else if(s.mode==='AUTO_REEL'&&s.enabled===false)value='0 W';
+   else if(s.mode==='AUTO_REEL'&&s.enabled===true&&Number.isFinite(s.auto_requested_power_w))value=Math.round(s.auto_requested_power_w).toLocaleString('fr-CH')+' W';
+  }
+  el('boiler-quick-power').textContent=value;
+  el('boiler-quick-power-label').textContent=manual?'Commande DAC demandée':'Puissance demandée';
+  document.body.dataset.boilerMode=requested;
+  const message=s.error?'Chauffe suspendue · défaut de commande.':
+   s.startup_pending?'Reprise en attente · commande non confirmée.':
+   !fresh?'Chauffe suspendue · température non validée.':
+   s.heat_requested?'Chauffe demandée · état physique non mesuré.':'Aucune chauffe demandée · état physique non mesuré.';
+  el('boiler-brief').textContent=message;
+  const alert=el('boiler-alert');
+  alert.hidden=!s.error&&!s.startup_pending&&fresh;
+  alert.textContent=s.error?'Défaut actif : voir les diagnostics.':
+   s.startup_pending?'Reprise en attente : confirmer le mode avant une nouvelle commande.':
+   !fresh?'Température du boiler non validée : commande de chauffe suspendue.':'';
+ }
  function render(s){
-  state=s;token=s.token||token;window.renderPowerGauge(s);paint(s);
+  state=s;token=s.token||token;window.renderPowerGauge(s);paint(s);paintSummary(s);
   el('output-restore').textContent=s.restore_status||'';
   const manual=selected(s)==='MANUEL_REEL';
+  if(manual&&lastDisplayMode!=='MANUEL_REEL')el('manual-settings').open=true;
+  if(!manual&&lastDisplayMode==='MANUEL_REEL')el('manual-settings').open=false;
+  lastDisplayMode=selected(s);
   el('manual-controls').hidden=!manual;
   el('manual-target').disabled=manual;
   el('manual-target').max=s.thermal_ceiling_c;
@@ -28,7 +54,7 @@
   else if(hardwareError)el('output-error').textContent='';
   hardwareError=Boolean(s.error);
  }
- async function refresh(){if(busy)return;try{const r=await fetch('./api/output',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const s=await r.json();if(!busy&&(!state||s.revision>=state.revision))render(s);}catch(e){window.renderPowerGauge(null);el('output-error').textContent='Communication perdue : '+e;el('output-state').textContent='État de sortie inconnu';}}
+ async function refresh(){if(busy)return;try{const r=await fetch('./api/output',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const s=await r.json();if(!busy&&(!state||s.revision>=state.revision))render(s);}catch(e){window.renderPowerGauge(null);el('output-error').textContent='Communication perdue : '+e;el('output-state').textContent='État de sortie inconnu';el('boiler-quick-power').textContent='—';el('boiler-brief').textContent='État inconnu · connexion perdue.';el('boiler-alert').hidden=false;el('boiler-alert').textContent='Communication perdue : ne pas se fier aux dernières valeurs affichées.';}}
  async function send(command){
   const last=queue[queue.length-1];if(command.action==='stop')queue=[command];else if(last&&last.action==='manual'&&command.action==='manual')queue[queue.length-1]=command;else queue.push(command);
   if(busy)return;busy=true;el('output-error').textContent='';

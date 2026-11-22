@@ -9,6 +9,15 @@ const kwh=n=>isnum(n)?n.toLocaleString("fr-CH",{maximumFractionDigits:2})+" kWh"
 const kw=n=>isnum(n)?n.toLocaleString("fr-CH",{maximumFractionDigits:3})+" kW":"—";
 const watts=n=>isnum(n)?Math.round(n).toLocaleString("fr-CH")+" W":"—";
 const celsius=n=>isnum(n)?n.toLocaleString("fr-CH",{maximumFractionDigits:1})+" °C":"—";
+/* Nominal setpoint only: DAC percentage is not an electrical measurement. */
+function manualPower(output){
+ if (!output || output.mode !== 'MANUEL_REEL') return null;
+ const percent=output.manual_percent, maximum=output.max_power_w;
+ if (output.error || output.startup_pending || output.dac_recovery?.pending ||
+     output.enabled !== true || !Number.isFinite(percent) || percent < 0 || percent > 100 ||
+     !Number.isFinite(maximum) || maximum <= 0) return null;
+ return {percent, nominalWatts:maximum * percent / 100};
+}
 function tag(id,state,label){
  const e=$(id);e.className="tag"+(state?" "+state:"");e.textContent=label;
 }
@@ -17,13 +26,18 @@ function render(p){
  renderApplicationHealth(p);
  const o=p.options||{},w=p.weather||{},s=p.sensors||{},prof=p.profile||{};
  const output=p.output_control||{};
+ window.SurplusHomeBoiler?.render(output,p);
+ text('home-boiler-mode',output.startup_pending?'Reprise en attente':({AUTO:'ARRÊT',AUTO_REEL:'AUTO',MANUEL_REEL:'MANUEL'})[output.mode]||'Non confirmé');
+ text('home-boiler-comfort',isnum(o.weather_min_c)&&o.comfort_time?'Confort '+celsius(o.weather_min_c)+' à '+o.comfort_time:'Confort non confirmé');
  const measuredAt=Date.parse(output.temperature_at||'');
  const age=(Date.now()-measuredAt)/1000;
  const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
   Number.isFinite(age)&&age>=-2&&age<=(o.boiler_temperature_max_age_seconds??60);
  text('summary-grid',watts(p.meter_w));
  text('summary-temp',measured?celsius(output.temperature_c):'—');
- text('summary-power',output.mode==='AUTO_REEL'&&output.enabled===true?watts(output.auto_requested_power_w):output.mode==='AUTO'?'0 W':'—');
+ const manual=manualPower(output);
+ const unconfirmed=output.error||output.startup_pending||output.dac_recovery?.pending;
+ text('summary-power',unconfirmed?'—':manual ? manual.percent.toLocaleString('fr-CH')+' % DAC · '+watts(manual.nominalWatts)+' estimés' : output.mode==='AUTO_REEL'&&output.enabled===true?watts(output.auto_requested_power_w):output.mode==='AUTO'?'0 W':'—');
  text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
  text('boiler-headline',measured?celsius(output.temperature_c):'Température inconnue');
  const today=typeof w.gross_today_remaining_kwh==="number"?w.gross_today_remaining_kwh:prof.daily_today_remaining_kwh;
@@ -139,8 +153,10 @@ function renderCalculation(p){
  text('calc-target',celsius(adaptive?w.target_c:o.boiler_max_temp_c));
  text('calc-target-state',adaptive?'Consigne calculée maintenant':'Plafond manuel · adaptation inactive');
  const output=p.output_control||{};
- const requested=output.mode==='AUTO_REEL'?(output.enabled?output.auto_requested_power_w:0):output.mode==='AUTO'?0:null;
- text('calc-heat',watts(requested));text('calc-heat-state',output.mode==='AUTO'?'Arrêt':output.mode==='MANUEL_REEL'?'Commande manuelle':'État : '+(output.reason||'—'));
+ const manual=manualPower(output);
+ const unconfirmed=output.error||output.startup_pending||output.dac_recovery?.pending;
+ const requested=unconfirmed?null:output.mode==='AUTO_REEL'?(output.enabled?output.auto_requested_power_w:0):output.mode==='AUTO'?0:manual?.nominalWatts;
+ text('calc-heat',watts(requested));text('calc-heat-state',unconfirmed?'Commande non confirmée · '+(output.reason||'—'):output.mode==='AUTO'?'Arrêt':output.mode==='MANUEL_REEL'?(manual?'Consigne nominale estimée · '+manual.percent.toLocaleString('fr-CH')+' % DAC':'Commande non confirmée · '+(output.reason||'—')):'État : '+(output.reason||'—'));
  text('calc-protection',!isnum(p.meter_w)?'Mesure inexploitable':o.grid_backup_enabled?'Appoint confort autorisé':'Surplus uniquement');
  text('calc-reserve','Réserve appliquée : '+watts(o.target_export_w+(o.weather_enabled?o.weather_reserve_w:0)));
  text('calc-decision',w.decision||'Stratégie non évaluée');
@@ -175,6 +191,8 @@ async function update(){
  }catch(error){document.body.classList.add('disconnected');text('poll-text','Connexion perdue · valeurs précédentes périmées');
  renderApplicationHealth({application_health:{state:'NON_VERIFIABLE',alarms:(currentData?.application_health?.alarms||[]).map(a=>({...a,state:'NON_VERIFIABLE'}))}});
  text('application-health-mode','Connexion perdue · état actuel non confirmé.');
+ window.SurplusHomeBoiler?.offline();text('home-boiler-mode','État inconnu · connexion perdue');
+ text('summary-power','—');text('calc-heat','—');text('calc-heat-state','État non confirmé · connexion perdue');
  tag('grid-tag','bad','Données périmées');text('calc-protection','État inconnu');
  text('fallback-grid','Communication interface perdue · état non confirmé');
  tag('comfort-status','bad','Plan périmé');text('comfort-reason','Communication perdue : le plan affiché ne confirme pas l’état actuel.');
@@ -183,6 +201,38 @@ async function update(){
  }finally{updating=false;}
 }
 $('expand-all').onclick=()=>{expanded=!expanded;document.querySelectorAll('#page-inputs details').forEach(e=>e.open=expanded);text('expand-all',expanded?'Masquer les détails':'Voir les détails des entrées');};
+window.surplusRefreshDashboard=update;
+let solarExpiry=null,solarBusy=false;
+async function updateSolarActual(){
+ if(solarBusy)return;solarBusy=true;
+ try{
+  const response=await fetch('./api/energy?period=day',{cache:'no-store',signal:AbortSignal.timeout(12000)});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const data=await response.json(),pv=data.pv_actual||{};
+  clearTimeout(solarExpiry);
+  const fresh=reading=>reading?.status==='OK' && isnum(reading.value) &&
+   Number.isFinite(Date.parse(reading.at||'')) && Date.parse(reading.at)<=Date.now()+2000 &&
+   Number.isFinite(Date.parse(reading.valid_until||'')) && Date.now()<=Date.parse(reading.valid_until);
+  const power=fresh(pv.power)?watts(pv.power.value):'—';
+  const today=fresh(pv.energy_today)?kwh(pv.energy_today.value):'—';
+  text('summary-pv-actual',power);text('solarman-power-detail',power);
+  text('summary-pv-actual-today','Aujourd’hui : '+today);text('solarman-energy-detail',today);
+  tag('solarman-tag',fresh(pv.power)?'ok':'bad',fresh(pv.power)?'Mesure disponible':'Indisponible');
+  text('summary-pv-actual-source',fresh(pv.power)?(pv.power.source+' · '+pv.power.entity_id+' · '+new Date(pv.power.at).toLocaleString('fr-CH')):(pv.power?.reason||'Capteur indisponible'));
+  const expiries=[pv.power,pv.energy_today].filter(fresh).map(r=>Date.parse(r.valid_until));
+  if(expiries.length)solarExpiry=setTimeout(()=>{
+   text('summary-pv-actual','—');text('summary-pv-actual-today','Aujourd’hui : —');
+   text('solarman-power-detail','—');text('solarman-energy-detail','—');
+   tag('solarman-tag','bad','Données périmées');updateSolarActual();
+  },Math.max(10,Math.min(...expiries)-Date.now()+10));
+ }catch(error){
+  clearTimeout(solarExpiry);
+  text('summary-pv-actual','—');text('summary-pv-actual-today','Aujourd’hui : —');
+  text('solarman-power-detail','—');text('solarman-energy-detail','—');
+  tag('solarman-tag','bad','Non vérifiable');text('summary-pv-actual-source','Lecture indisponible');
+ }finally{solarBusy=false;}
+}
+updateSolarActual();setInterval(updateSolarActual,30000);
 update();setInterval(update,5000);
 if(/\/profil(?:\.html)?$/.test(location.pathname)&&!location.hash)location.hash='profil';
 const boilerFrame=$('boiler-frame');

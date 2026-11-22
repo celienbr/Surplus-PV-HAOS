@@ -4,13 +4,15 @@
  const finite=n=>typeof n==='number'&&Number.isFinite(n);
  function powerGauge(s){
   if(!s || typeof s!=='object')return {value:null,detail:'État indisponible · état physique non vérifié'};
+  if(s.error || s.startup_pending || s.dac_recovery?.pending)
+   return {value:null,detail:'Commande non confirmée · état physique non vérifié'};
   const mode=s.mode, manual=mode==='MANUEL_REEL';
   const auto=['AUTO','AUTO_REEL'].includes(mode);
   const label=mode==='AUTO'?'Arrêt':mode==='AUTO_REEL'?'Consigne calculée':'Commande acceptée';
   if(!manual&&!auto)return {value:null,detail:'Mode inconnu · état physique non vérifié'};
   let n;
   if(mode==='AUTO')n=0;
-  else if(manual){if(typeof s.enabled!=='boolean')n=null;else n=s.enabled?s.manual_percent:0;}
+  else if(manual){n=s.enabled===true?s.manual_percent:null;}
   else if(mode!=='AUTO'&&s.enabled===false)n=0;
   else if(mode!=='AUTO'&&s.enabled!==true)n=null;
   else n=finite(s.auto_requested_power_w)&&finite(s.max_power_w)&&s.max_power_w>0?100*s.auto_requested_power_w/s.max_power_w:null;

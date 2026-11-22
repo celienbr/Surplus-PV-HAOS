@@ -1745,7 +1745,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.27",
+            "version": "1.0.0-alpha.28",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1904,7 +1904,7 @@ def handler_factory(diag: Diagnostic):
             elif path == "/theme.js":
                 body = THEME_JS.read_bytes()
                 content_type = "application/javascript; charset=utf-8"
-            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/power-gauge.js", "/heartbeat_status.js"):
+            elif path in ("/ui.js", "/dashboard.js", "/chart.js", "/output.js", "/power-gauge.js", "/heartbeat_status.js", "/home-boiler.js"):
                 body = (MOBILE_INPUTS.parent / path[1:]).read_bytes()
                 content_type = "application/javascript; charset=utf-8"
             elif path == "/history.js":

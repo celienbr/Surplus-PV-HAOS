@@ -1,0 +1,212 @@
+{
+  "version": "1.0.0-alpha.28",
+  "source_commit": "0985b32873b8c07da99cd6ae48571849159a1289",
+  "source_dirty": false,
+  "expected_public_head": "9e8e7b2081e5d69a0062c4f2d397d9853d085dcd",
+  "publication_authorized": false,
+  "pi_installation_authorized": false,
+  "archive": "SurplusPV-HAOS-1.0.0-alpha.28.zip",
+  "archive_sha256": "579089ccf6b2f39b291995a87412241e4d921faa1fd3fae95b9b78eab1a0ad49",
+  "files": {
+    "README.md": {
+      "sha256": "07600c7bed2ddf7ff8b1c8a5d8076311c514a40a6ac6fe093e912df677b4cb59",
+      "mode": "0644"
+    },
+    "haos_diagnostic/CHANGELOG.md": {
+      "sha256": "7240ba02d6c95fc0e760e9c0aa7d31b2a033e08d158e66b87a77b27ecbe68883",
+      "mode": "0644"
+    },
+    "haos_diagnostic/DOCS.md": {
+      "sha256": "8425d03ff8319a08fcd873b9f95984c26d812b17a9b7c8f02b819070560a700d",
+      "mode": "0644"
+    },
+    "haos_diagnostic/Dockerfile": {
+      "sha256": "6bcbe25a861a3add44698797b1d07036ece1df14f18a04b28165af35411d87cb",
+      "mode": "0644"
+    },
+    "haos_diagnostic/README.md": {
+      "sha256": "8425d03ff8319a08fcd873b9f95984c26d812b17a9b7c8f02b819070560a700d",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/__init__.py": {
+      "sha256": "cdba76b098723203e7a2c1c8583905862417895aff4d4ebeacaf72c2d188911b",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/adaptive_temperature.py": {
+      "sha256": "4b9388cb7957b748c97dca15c636a6017d3e2f19cd4fc30e07f268efcb0ac8f8",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/alarms.py": {
+      "sha256": "877e961e20d79a6c006fa20e27745ee422c94b97d072032db0e02eff5b3b4522",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/async_ha.py": {
+      "sha256": "ca6fc5ccfb354e1f53fa322e942f6b9c6631e7bfddfdf49364b3f068e3587f3f",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/auto_target.py": {
+      "sha256": "843f283117af15cd97f8cb923787ee60b5e6773cd693a19ff2b3ced7288293f6",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/boiler_temperature.py": {
+      "sha256": "b048b9cdb2efdccbdc8d51006aa5c1bdd588b38a9760630ed81c84d908e0d0b1",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/comfort_planner.py": {
+      "sha256": "10f4a7a18a779d831a5f5bbc91902ec9c0e33f07ddd086556efe4eba6b8bdbdd",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/controller.py": {
+      "sha256": "feb8b2108619965324f46d661bd75e165933d7de32b8d10d73ace6eea91f2c56",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/dac_calibration.py": {
+      "sha256": "5cee8a591b8765d14664efa10d83958a21d12e86e9fc24a7983084663a2890d8",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/diagnostic_server.py": {
+      "sha256": "d78aa950d2728490085b7a36c1713360828b2c83855a6082fcc5627b94e3a278",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/energy_dashboard.py": {
+      "sha256": "2c63bbe48e54783cca150da1c6ab83d1a5bfbd364f0b72c69c35a5dca025b05e",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/forecast_adapter.py": {
+      "sha256": "adba8d537e50ae276f1aa4cd04c6b8243484cbc117a2c323ac2754b0518c02fd",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/gp8600.py": {
+      "sha256": "f675e96cdb166b80c7aa67fac43b63958aa743139456969012f4abf25f235942",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/gpio_v2.py": {
+      "sha256": "d3bb5b9ba2f844d00d54644ea9ed22e57039607ad6da915b748ce90953b41615",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/gplugk.py": {
+      "sha256": "f90fe7fd13a59467506fbda352909b5f2dfb3f4a7c526bb772d8303d801284c5",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/ha_client.py": {
+      "sha256": "5c35e68f55d2ce7f3252a8a152009a3108a2675e7543f149c36ee1645d05730b",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/heartbeat.py": {
+      "sha256": "856daffc8c1ced0637a05040a04997332854cbf8af5487c55f9f4864883858b6",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/history_store.py": {
+      "sha256": "e4afdf4e6b6c0c61dea20a2d10c016c935df86d00746d2eedf3d15e03c961b8c",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/measurements.py": {
+      "sha256": "8336fb9e5ab727b8361c5e268246f365869f3ebb8381e96b094226000be55c4d",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/open_meteo_weather.py": {
+      "sha256": "aa18c9d88bc34bc08694b9afa5ebc8f81d8248dc353ffee44cd3e61b92fa704d",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/output_control.py": {
+      "sha256": "5796e1dc1c237deb71292602e7fe19f774e71577faed5de31a717e2fe0b93426",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/pac_estimate.py": {
+      "sha256": "d99bacc27f46507be719006b6d29896e2cc954e2662bff2ea0544e8fedb13122",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/power_curve.py": {
+      "sha256": "2458757aee8fb041f3d57ee742e5d46ad08025ca4669aa4ee92c5d65364b26e5",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/predictive_target.py": {
+      "sha256": "3cfeddb388ffe6efac570583038bd2ebbf5ffd70601499c27fa60cb2993cbcd5",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/profile_forecast.py": {
+      "sha256": "6994c3ec52f787863e3231acedcd7162927df7406925dd49a2a39fcc4459840f",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/pv_actual.py": {
+      "sha256": "778ff6d452a8d699b2f677e420ccfc6f36e01115f0c0be26a76ac48e2f0b979e",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/pv_history.py": {
+      "sha256": "449d5eb08bfc14d526079e68709405f88de06c60f132c3ac2e899cd54f41eaf3",
+      "mode": "0644"
+    },
+    "haos_diagnostic/app/user_settings.py": {
+      "sha256": "bef996cea6b0baebec3e28f8b21dd2e39fdf6dcf20f464866db1073472fbdabd",
+      "mode": "0644"
+    },
+    "haos_diagnostic/config.yaml": {
+      "sha256": "3bc4abdb1e3f57d5b38a4ec91ea0ca43a3768031ba1d5c8e3e7d84cfe86ece09",
+      "mode": "0644"
+    },
+    "haos_diagnostic/run.sh": {
+      "sha256": "dbe75c15a933e49b5518bae59ca7414a06a7ebe306e922cf412cdfb804fbbf08",
+      "mode": "0755"
+    },
+    "haos_diagnostic/translations/fr.yaml": {
+      "sha256": "882a7750d6897b4cd19cab32b4a01e6142c5e460058e638cb904dfbccb24af53",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/boiler.html": {
+      "sha256": "666c67e20f05ce1f79b4cb79f977ef793ae5632ae60212a77483d6ba05121e26",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/chart.js": {
+      "sha256": "58580024dc40ce02c4ed8d2f5cb91da440df5b12d666c3f0aa6887f0ea8fd08a",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/dashboard.js": {
+      "sha256": "a970b99f576ea969360622620fbf84cb9c15b838ccd2849f2c67eaeb5a62bf02",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/heartbeat_status.js": {
+      "sha256": "dfaf75a0a61d873af063d464d13733700983a9c01844047b24e05338ddb53f51",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/history.js": {
+      "sha256": "afb57a6a6375e26d8befb8cf831684d81c589563c15fa0fa0a6478e3ec7b1414",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/home-boiler.js": {
+      "sha256": "ee032d674ce15c661e213b5ae36910f0a7858b02306e94c4b061fce2fb845c77",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/inputs.html": {
+      "sha256": "0dd964558bf9eb15d1ee580391dd7cce4e1fc0cb7e93c1e5a4cba483a6883ba8",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/output.js": {
+      "sha256": "45981c3146b1aa661d677cdfdc4cb5200843e2114fcd37a930f5d3228ca326eb",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/power-gauge.js": {
+      "sha256": "cc10e4be113b3ada9ebf51cd2b529504aaa92603336889408357cb8f9b45f91a",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/profile.html": {
+      "sha256": "6204f440e9105339aa6a789b2697c1e11ebc7b871ec8d110a64eff0b553193d6",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/theme.css": {
+      "sha256": "a17b5ff6991f823f5821629c0302db64455628cebe944f0b199fcadc04100549",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/theme.js": {
+      "sha256": "01935a58f14307f37550cb253205e7b058691a057dda14ac2a95347ad0ed66b4",
+      "mode": "0644"
+    },
+    "haos_diagnostic/web/ui.js": {
+      "sha256": "d5ccd63a718493aab0f86a940eedfca76278ee2171e5533cb91aa78f2acf2bee",
+      "mode": "0644"
+    },
+    "repository.yaml": {
+      "sha256": "5f265e28f14ec8e54e2f221177cd1afb22ff3b5725f304f8a1f504c73f8a7130",
+      "mode": "0644"
+    }
+  }
+}

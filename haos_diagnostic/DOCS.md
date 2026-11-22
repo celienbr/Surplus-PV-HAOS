@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.27
+# Surplus PV — Home Assistant OS 1.0.0-alpha.28
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.26
+## Mise à jour depuis Alpha.27
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.27, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.28, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 L’appoint réseau autorisé et dû peut fonctionner sans gPlugK. Le défaut du
@@ -25,9 +25,7 @@ conserve les transitions de défaut et de récupération.
 Le service réessaie la liaison à 0 mA. Trois initialisations acquittées et
 espacées de cinq secondes sont requises. Après un échec, le délai augmente
 jusqu’à 60 secondes. Une fois le défaut effacé, la reprise vérifie de nouveau
-le watchdog, la sonde du boiler et les limites thermiques. AUTO attend de
-nouvelles mesures gPlugK et utilise la courbe puissance/courant validée et la
-rampe existante. MANUEL reprend le pourcentage et la cible mémorisés dès
+le watchdog, la sonde du boiler et les limites thermiques. AUTO utilise les mesures gPlugK pour le surplus ; l’appoint confort dû et autorisé reste indépendant du compteur. La courbe puissance/courant validée et la rampe restent requises. MANUEL reprend le pourcentage et la cible mémorisés dès
 qu’une nouvelle mesure est valide et inférieure à la cible et au plafond.
 gPlugK ne conditionne pas cette reprise en MANUEL. ARRÊT annule la reprise et
 la vérification du DAC peut continuer à zéro.
@@ -86,6 +84,14 @@ Les préférences Alpha.18 sont conservées dans le fichier v3 sous `legacy` ;
 un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
 quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Le format v3 et la base SQLite sont conservés.
+
+## Retour arrière vers Alpha.27
+
+Demander ARRÊT, sauvegarder l'application et tout /data hors du Pi, y compris
+SQLite, WAL/SHM et préférences. Conserver les données récentes séparément.
+Restaurer la sauvegarde Alpha.27 de la même application sans la désinstaller,
+puis vérifier les réglages et réconcilier les données récentes. La restauration
+réelle sur le Pi n'a pas été exécutée par cette validation.
 
 ## Retour arrière vers Alpha.26
 
@@ -158,6 +164,4 @@ La conservation du fichier v3 ne rend pas Alpha.18 compatible avec son contenu ;
 les champs B3 restent archivés pour une reprise ou conversion contrôlée.
 
 Les protections indépendantes TH1/STB1, le watchdog Omron et le secours S2
-gardent leur rôle matériel. Les essais logiciels laissent les risques B01–B10
-ouverts et ne mesurent ni les contacts, ni le courant analogique, ni la chaîne
-thermique.
+gardent leur rôle matériel. Le propriétaire a déclaré le 21 novembre 2026 que le boiler et son circuit sont raccordés, que la sonde fonctionne, que la chauffe a été vérifiée et que ses validations matérielles sont terminées sans réserve restante selon sa déclaration. Les anciennes réserves B01–B10 restent traçables ; leur rapprochement documentaire avec les pièces disponibles reste à effectuer. Les essais logiciels ne mesurent ni les contacts, ni le courant analogique, ni la chaîne thermique.

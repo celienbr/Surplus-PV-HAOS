@@ -10,13 +10,22 @@
   const ticket=++request;if(live)rangeEnd=new Date();
   const end=new Date(rangeEnd),begin=new Date(end.getTime()-48*HOUR);
   label('history-status','Chargement des mesures enregistrées…');
-  const [historyResult,forecastResult]=await Promise.allSettled([
+  const dates=[];
+  for(let date=swissDay(begin), last=swissDay(end);;){
+   dates.push(date);if(date===last||dates.length>=4)break;
+   const [y,m,d]=date.split('-').map(Number);date=new Date(Date.UTC(y,m-1,d+1)).toISOString().slice(0,10);
+  }
+  const [historyResult,forecastResult,...pvResults]=await Promise.allSettled([
    get('./api/history?start='+encodeURIComponent(begin.toISOString())+'&end='+encodeURIComponent(end.toISOString())),
-   live?Promise.resolve(null):get('./api/forecast-at?at='+encodeURIComponent(end.toISOString()))]);
+   live?Promise.resolve(null):get('./api/forecast-at?at='+encodeURIComponent(end.toISOString())),
+   ...dates.map(date=>get('./api/energy?period=day&date='+encodeURIComponent(date)))]);
   if(ticket!==request)return;
   const hist=historyResult.status==='fulfilled'?historyResult.value:{points:[]};
   const forecast=forecastResult.status==='fulfilled'?forecastResult.value:null;
   window.SurplusChart.setHistory(hist.points,end.getTime(),live,forecast);
+  const pvRows=pvResults.flatMap(result=>result.status==='fulfilled' ?
+   (result.value.pv_history?.power_points||[]).map((point,index)=>({...point,gap_before:index===0||point.gap_before===true})) : []);
+  window.SurplusChart.setPvHistory(pvRows);
   label('history-status',historyResult.status==='fulfilled'?'Mesures originales conservées ; graphique réduit avec extrema et lacunes.':'Historique indisponible · '+String(historyResult.reason));
   label('history-count',(hist.points?.length||0)+' points historiques affichés · + achat / − injection');
   label('forecast-snapshot',live?'Prévision actuelle · données estimées, aucune puissance réseau future inventée.':forecast?.saved_at?'Prévision archivée publiée le '+displayDate(new Date(forecast.saved_at))+' · valeurs prévues à cette époque, pas des mesures.':forecastResult.status==='rejected'?'Archive de prévision indisponible.':'Aucune prévision archivée à cette date.');

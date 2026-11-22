@@ -26,6 +26,7 @@
  }
  const definitions=[
   {id:'grid',key:'grid_w',label:'Réseau gPlugK',kind:'mesure réelle',unit:'kW',factor:.001,axis:'power',color:'network',dash:[],source:'history'},
+  {id:'pv_actual',key:'pv_actual_w',label:'Production PV Solarman',kind:'mesure AC',unit:'kW',factor:.001,axis:'power',color:'solarActual',dash:[],source:'pv_history'},
   {id:'virtual',key:'simulated_boiler_w',label:'Chauffe virtuelle historique',kind:'archive antérieure',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[2,3],source:'history'},
   {id:'requested',key:'requested_boiler_w',label:'Chauffe demandée',kind:'commande enregistrée, non mesurée',unit:'kW',factor:.001,axis:'power',color:'heater',dash:[5,2],source:'history'},
   {id:'pv',key:'pv_w',label:'Production PV',kind:'prévision',unit:'kW',factor:.001,axis:'power',color:'solar',dash:[8,4],source:'forecast'},
@@ -33,9 +34,9 @@
   {id:'pac',key:'pac_w',label:'Consommation PAC',kind:'estimation',unit:'kW',factor:.001,axis:'power',color:'pac',dash:[3,4],source:'forecast'},
   {id:'surplus',key:'surplus_w',label:'Surplus disponible',kind:'estimation',unit:'kW',factor:.001,axis:'power',color:'surplus',dash:[3,4],source:'forecast'}
  ];
- function series(history,profile,now=Date.now()){
-  return definitions.map(d=>({...d,points:(d.source==='history'?history:profile?.points||[])
-   .filter(p=>Number.isFinite(stamp(p))&&(d.source!=='history'||stamp(p)<=now))
+ function series(history,profile,now=Date.now(),pvHistory=[]){
+  return definitions.map(d=>({...d,points:(d.source==='history'?history:d.source==='pv_history'?pvHistory:profile?.points||[])
+   .filter(p=>Number.isFinite(stamp(p))&&(d.source==='forecast'||stamp(p)<=now))
    .map(p=>({at:stamp(p),value:good(p[d.key])?p[d.key]*d.factor:null,gap:p.gap_before===true}))
    .sort((a,b)=>a.at-b.at)}));
  }
@@ -78,25 +79,41 @@
  window.SurplusTime={swissDayEnd,formatTime};
  window.SurplusEnergySeries=energySeries;
  const $=id=>document.getElementById(id),canvas=$('chart-power'),viewport=$('viewport-power');if(!canvas)return;
- let status=null,history=[],liveProfile={},archived=null,savedAt=null,anchor=Date.now(),isLive=true,zoom=1,selected=null,range='all';
+ let status=null,history=[],pvHistory=[],liveProfile={},archived=null,savedAt=null,anchor=Date.now(),isLive=true,zoom=1,selected=null,range='all';
  // Keep the default view readable; the remaining series stay selectable.
- const visible=new Set(['grid','pv','requested']);let drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
+ const visible=new Set(['grid','pv','requested']);let overlaySelection=null,layout='overlay',drawn=[],start=0,end=0,width=0,selectionTimes=[],plotHeight=320;
  let legendSignature='',renderQueued=false,pendingCenter=true;
  function schedule(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;draw();});}
  function context(can,w,h){const dpr=Math.min(devicePixelRatio||1,2);can.width=Math.round(w*dpr);can.height=Math.round(h*dpr);can.style.width=w+'px';can.style.height=h+'px';const ctx=can.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return ctx;}
  function palette(){return window.SurplusTheme.colors();}
- function availableSeries(){const all=series(history,archived||liveProfile);return all;}
+ function availableSeries(){const all=series(history,archived||liveProfile,Date.now(),pvHistory);return all;}
  function draw(){
   const now=Date.now();if(isLive)anchor=now;
   start=range==='future'?anchor:anchor-48*HOUR;end=range==='past'?anchor:anchor+48*HOUR;
   const all=availableSeries();drawn=all.filter(s=>visible.has(s.id)).map(s=>({...s,points:s.points.filter(p=>p.at>=start&&p.at<=end)}));
-  $('axis-target').hidden=!drawn.some(s=>s.axis==='target');
+  const bands=layout==='bands',laneHeight=150;
+  plotHeight=bands?Math.max(1,drawn.length)*laneHeight+42:320;
+  $('axis-power').hidden=bands;$('axis-temp').hidden=bands;
+  $('axis-target').hidden=bands||!drawn.some(s=>s.axis==='target');
   const base=Math.max(viewport.clientWidth,Math.min(1100,(end-start)/HOUR*14));width=Math.min(8000,Math.max(viewport.clientWidth,base*zoom));
   const ctx=context(canvas,width,plotHeight),p=palette(),top=32,bottom=48,usable=plotHeight-top-bottom;
   const ext={};for(const axis of ['power','temp','target']){ext[axis]=extent(drawn.filter(s=>s.axis===axis).flatMap(s=>s.points.map(p=>p.value).filter(good)),axis==='power'?[-1,6]:axis==='temp'?[-5,25]:[20,80],axis);}
+  const laneExt=new Map(drawn.map(s=>[s.id,extent(s.points.map(point=>point.value),s.axis==='power'?[-1,6]:[-5,25],s.axis)]));
   const x=at=>12+(at-start)/(end-start)*(width-24),y=(value,axis)=>top+(ext[axis][1]-value)/(ext[axis][1]-ext[axis][0])*usable;
+  const laneY=(value,s)=>{const i=drawn.findIndex(row=>row.id===s.id),scale=laneExt.get(s.id);return i*laneHeight+33+(scale[1]-value)/(scale[1]-scale[0])*(laneHeight-51);};
   ctx.fillStyle=p.background;ctx.fillRect(0,0,width,plotHeight);
-  for(const axis of ['power','temp','target']){
+  if(bands)for(let i=0;i<drawn.length;i++){
+   const s=drawn[i],hi=i*laneHeight,scale=laneExt.get(s.id);
+   if(i%2===1){ctx.fillStyle='rgba(111,150,162,.065)';ctx.fillRect(0,hi,width,laneHeight);}
+   ctx.strokeStyle=p.grid;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(0,hi+laneHeight-2);ctx.lineTo(width,hi+laneHeight-2);ctx.stroke();
+   ctx.fillStyle=p[s.color];ctx.font='bold 13px system-ui';ctx.textAlign='left';ctx.fillText(s.label+' · '+s.unit,15,hi+20);
+   ctx.font='11px system-ui';ctx.fillStyle=p.ticks;
+   for(let j=0;j<=2;j++){const v=scale[0]+j*(scale[1]-scale[0])/2,Y=laneY(v,s);
+    ctx.strokeStyle=p.grid;ctx.beginPath();ctx.moveTo(0,Y);ctx.lineTo(width,Y);ctx.stroke();
+    ctx.fillStyle=p.ticks;ctx.fillText(v.toLocaleString('fr-CH',{maximumFractionDigits:1}),15,Y-4);
+   }
+  }
+  if(!bands)for(const axis of ['power','temp','target']){
    if(axis==='target'&&$('axis-target').hidden)continue;
    const ax=context($('axis-'+axis),44,plotHeight);ax.fillStyle=p.background;ax.fillRect(0,0,44,plotHeight);ax.fillStyle=p.ticks;ax.font='bold 10px system-ui';ax.fillText(axis==='power'?'kW':axis==='temp'?'Ext. °C':'Eau °C',3,14);
    for(let i=0;i<=4;i++){const value=ext[axis][0]+i*(ext[axis][1]-ext[axis][0])/4,Y=y(value,axis);ax.fillText(value.toLocaleString('fr-CH',{maximumFractionDigits:1}),3,Y+4);
@@ -104,15 +121,15 @@
    if(axis==='power'){ax.fillText('0',3,y(0,axis)+4);ctx.strokeStyle=p.ticks;ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(0,y(0,axis));ctx.lineTo(width,y(0,axis));ctx.stroke();}
   }
   const tickHours=Math.max(1,Math.ceil((end-start)/HOUR/(width/95)));
-  for(let time=Math.ceil(start/(tickHours*HOUR))*tickHours*HOUR;time<=end;time+=tickHours*HOUR){const X=x(time);ctx.strokeStyle=p.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(X,top);ctx.lineTo(X,plotHeight-bottom);ctx.stroke();ctx.fillStyle=p.ticks;ctx.font='10px system-ui';ctx.textAlign='center';const d=new Date(time);ctx.fillText(d.toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit'}),X,plotHeight-26);ctx.fillText(d.toLocaleString('fr-CH',{timeZone:'Europe/Zurich',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}),X,plotHeight-11);}
+  for(let time=Math.ceil(start/(tickHours*HOUR))*tickHours*HOUR;time<=end;time+=tickHours*HOUR){const X=x(time);ctx.strokeStyle=p.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(X,bands?0:top);ctx.lineTo(X,plotHeight-bottom);ctx.stroke();ctx.fillStyle=p.ticks;ctx.font='10px system-ui';ctx.textAlign='center';const d=new Date(time);ctx.fillText(d.toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit'}),X,plotHeight-26);ctx.fillText(d.toLocaleString('fr-CH',{timeZone:'Europe/Zurich',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}),X,plotHeight-11);}
   ctx.textAlign='left';
   for(const s of drawn){ctx.strokeStyle=p[s.color];ctx.fillStyle=p[s.color];ctx.lineWidth=s.id==='grid'?2:2.4;ctx.setLineDash(s.dash);ctx.beginPath();let previous=null;
-   for(const point of s.points){if(!good(point.value)){previous=null;continue;}const X=x(point.at),Y=y(point.value,s.axis);
+   for(const point of s.points){if(!good(point.value)){previous=null;continue;}const X=x(point.at),Y=bands?laneY(point.value,s):y(point.value,s.axis);
     if(!previous||point.gap||(s.source==='forecast'&&point.at-previous.at>1.6*HOUR)){ctx.moveTo(X,Y);if(s.source==='history')ctx.fillRect(X-1.3,Y-1.3,2.6,2.6);}else{ctx.lineTo(X,Y);}previous=point;}
    ctx.stroke();
    // Keep every point in the path and selection; omit overlapping markers
    // when a dense forecast would otherwise obscure the curves.
-   if(s.source==='forecast'){ctx.setLineDash([]);let lastX=-Infinity;for(const point of s.points)if(good(point.value)){const X=x(point.at);if(X-lastX<8)continue;ctx.beginPath();ctx.arc(X,y(point.value,s.axis),2,0,Math.PI*2);ctx.fill();lastX=X;}}
+   if(s.source==='forecast'){ctx.setLineDash([]);let lastX=-Infinity;for(const point of s.points)if(good(point.value)){const X=x(point.at);if(X-lastX<8)continue;ctx.beginPath();ctx.arc(X,bands?laneY(point.value,s):y(point.value,s.axis),2,0,Math.PI*2);ctx.fill();lastX=X;}}
   }
   function marker(at,label,color){if(at<start||at>end)return;const X=x(at);ctx.setLineDash([5,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(X,top-9);ctx.lineTo(X,plotHeight-bottom);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=p.background;const labelWidth=ctx.measureText(label).width+10;const left=Math.max(0,Math.min(width-labelWidth,X+5));ctx.fillRect(left,3,labelWidth,20);ctx.fillStyle=color;ctx.font='bold 11px system-ui';ctx.fillText(label,left+3,18);}
   selectionTimes=[...new Set(drawn.flatMap(s=>s.points.filter(p=>good(p.value)).map(p=>p.at)))].sort((a,b)=>a-b);
@@ -126,14 +143,21 @@
   renderLegend(all);renderTooltip();renderTable();
   if(pendingCenter){viewport.scrollLeft=range==='all'?Math.max(0,x(anchor)-viewport.clientWidth/2):0;pendingCenter=false;}
  }
- function renderLegend(all){const signature=all.map(s=>s.id).join();if(signature===legendSignature)return;legendSignature=signature;$('chart-legend').replaceChildren();for(const s of all){const button=document.createElement('button');button.type='button';button.dataset.series=s.id;button.setAttribute('aria-pressed',String(visible.has(s.id)));const sample=document.createElement('i');sample.style.setProperty('--series-color','var(--'+(s.color==='temperature'?'temp':s.color==='network'?'network':s.color)+'-chart)');sample.style.borderTopStyle=s.dash.length?'dashed':'solid';button.append(sample,document.createTextNode(s.label+' · '+s.kind+' ('+s.unit+')'));button.onclick=()=>{visible.has(s.id)?visible.delete(s.id):visible.add(s.id);button.setAttribute('aria-pressed',String(visible.has(s.id)));selected=null;schedule();};$('chart-legend').append(button);}}
+ function renderLegend(all){const signature=all.map(s=>s.id).join();if(signature!==legendSignature){legendSignature=signature;$('chart-legend').replaceChildren();for(const s of all){const button=document.createElement('button');button.type='button';button.dataset.series=s.id;const sample=document.createElement('i');sample.style.setProperty('--series-color','var(--'+(s.color==='temperature'?'temp':s.color==='network'?'network':s.color==='solarActual'?'solar-actual':s.color)+'-chart)');sample.style.borderTopStyle=s.dash.length?'dashed':'solid';button.append(sample,document.createTextNode(s.label+' · '+s.kind+' ('+s.unit+')'));button.onclick=()=>{visible.has(s.id)?visible.delete(s.id):visible.add(s.id);button.setAttribute('aria-pressed',String(visible.has(s.id)));selected=null;schedule();};$('chart-legend').append(button);}}$('chart-legend').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(visible.has(b.dataset.series))));}
  function renderTooltip(){const box=$('chart-tooltip');if(selected===null){box.textContent='Touchez une courbe pour consulter ses valeurs exactes. Au clavier : flèches gauche / droite dans le graphique.';return;}const title=document.createElement('strong');title.textContent=formatTime(selected);const list=document.createElement('ul');for(const s of drawn){const pt=s.points.find(p=>p.at===selected);if(!pt||!good(pt.value))continue;const li=document.createElement('li');li.textContent=s.label+' : '+pt.value.toLocaleString('fr-CH',{maximumFractionDigits:3})+' '+s.unit+' · '+s.kind+(s.source==='forecast'&&savedAt?' archivée, publiée '+formatTime(Date.parse(savedAt)):'');list.append(li);}box.replaceChildren(title,list);}
  function renderTable(){const table=$('chart-table');if(!table.closest('details').open)return;const frag=document.createDocumentFragment();const rows=drawn.flatMap(s=>s.points.map(p=>({s,p}))).sort((a,b)=>a.p.at-b.p.at);for(const {s,p} of rows){const tr=document.createElement('tr');for(const txt of [formatTime(p.at),s.label+' · '+s.kind,good(p.value)?p.value.toLocaleString('fr-CH',{maximumFractionDigits:3})+' '+s.unit:'Indisponible']){const td=document.createElement('td');td.textContent=txt;tr.append(td);}frag.append(tr);}table.tBodies[0].replaceChildren(frag);}
  $('chart-table').closest('details').addEventListener('toggle',renderTable);
  function setZoom(next,screenX=viewport.clientWidth/2){const fraction=(viewport.scrollLeft+screenX)/Math.max(1,width);zoom=Math.max(.5,Math.min(6,next));draw();viewport.scrollLeft=fraction*width-screenX;}
  $('history-in').onclick=()=>setZoom(zoom*1.4);$('history-out').onclick=()=>setZoom(zoom/1.4);$('history-reset').onclick=()=>{zoom=1;selected=null;draw();viewport.scrollLeft=isLive&&range==='all'?Math.max(0,width/2-viewport.clientWidth/2):0;};
  $('chart-range').onchange=e=>{range=e.target.value;selected=null;zoom=1;draw();viewport.scrollLeft=0;};
- let gesture=null,tap=null;
+ $('chart-layout').onchange=e=>{const next=e.target.value;if(next===layout)return;layout=next;selected=null;draw();};
+ let gesture=null,tap=null,drag=null;
+ viewport.style.cursor='grab';
+ viewport.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button===0)drag={x:e.clientX,scroll:viewport.scrollLeft,id:e.pointerId};});
+ window.addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;const delta=e.clientX-drag.x;if(Math.abs(delta)>5){tap=null;viewport.style.cursor='grabbing';viewport.scrollLeft=drag.scroll-delta;}});
+ const endDrag=e=>{if(drag&&e.pointerId===drag.id){drag=null;viewport.style.cursor='grab';}};
+ window.addEventListener('pointerup',endDrag);window.addEventListener('pointercancel',endDrag);
+ viewport.addEventListener('wheel',e=>{if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();setZoom(zoom*(e.deltaY<0?1.13:1/1.13),e.clientX-viewport.getBoundingClientRect().left);},{passive:false});
  const distance=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
  viewport.addEventListener('touchstart',e=>{if(e.touches.length===2){const center=(e.touches[0].clientX+e.touches[1].clientX)/2-viewport.getBoundingClientRect().left;gesture={distance:distance(e.touches),zoom,center,fraction:(viewport.scrollLeft+center)/width};tap=null;}else{gesture=null;}},{passive:true});
  viewport.addEventListener('touchmove',e=>{if(!gesture||e.touches.length!==2)return;e.preventDefault();zoom=Math.max(.5,Math.min(6,gesture.zoom*distance(e.touches)/Math.max(10,gesture.distance)));draw();viewport.scrollLeft=gesture.fraction*width-gesture.center;},{passive:false});
@@ -143,6 +167,7 @@
  viewport.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key)||!selectionTimes.length)return;e.preventDefault();const i=selected===null?-1:nearestIndex(selectionTimes,selected);selected=selectionTimes[Math.max(0,Math.min(selectionTimes.length-1,i+(e.key==='ArrowRight'?1:-1)))];schedule();const x=12+(selected-start)/(end-start)*(width-24);if(x<viewport.scrollLeft||x>viewport.scrollLeft+viewport.clientWidth)viewport.scrollLeft=x-viewport.clientWidth/2;});
  window.SurplusChart={
   setStatus(p){status=p;liveProfile=p.profile||{};schedule();},
+  setPvHistory(rows){pvHistory=rows||[];schedule();},
   setHistory(rows,at,live,archive){const changed=isLive!==live||(!live&&anchor!==at);if(changed){pendingCenter=true;selected=null;}history=rows||[];anchor=at;isLive=live;archived=live?null:archive?.profile||{points:[]};savedAt=live?null:archive?.saved_at||null;schedule();},
   // Narrow observability for UI tests; data are already visible in the same UI.
   inspect(){return {start,end,zoom,visible:[...visible],series:drawn,anchor,isLive};}
