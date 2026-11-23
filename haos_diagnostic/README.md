@@ -1,18 +1,25 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.28
+# Surplus PV — Home Assistant OS 1.0.0-alpha.30
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.27
+## Mise à jour depuis Alpha.28
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.28, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.30, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
+
+Au démarrage, AUTO / Prévision est sélectionné et la chauffe reprend après
+validation des mesures et sécurités. Un ARRÊT volontaire reste mémorisé.
+Avec une provenance des préférences ambiguë, la demande reste à zéro.
+L’appoint réseau dépend du réglage grid_backup_enabled. Après le dernier départ
+prudent, un cycle autorisé monte progressivement vers la puissance maximale,
+puis s’arrête au minimum de confort ou à la fin de la période de grâce.
 
 L’appoint réseau autorisé et dû peut fonctionner sans gPlugK. Le défaut du
 compteur reste indiqué. Les limites et la rampe restent actives.
@@ -25,9 +32,10 @@ conserve les transitions de défaut et de récupération.
 Le service réessaie la liaison à 0 mA. Trois initialisations acquittées et
 espacées de cinq secondes sont requises. Après un échec, le délai augmente
 jusqu’à 60 secondes. Une fois le défaut effacé, la reprise vérifie de nouveau
-le watchdog, la sonde du boiler et les limites thermiques. AUTO utilise les mesures gPlugK pour le surplus ; l’appoint confort dû et autorisé reste indépendant du compteur. La courbe puissance/courant validée et la rampe restent requises. MANUEL reprend le pourcentage et la cible mémorisés dès
-qu’une nouvelle mesure est valide et inférieure à la cible et au plafond.
-gPlugK ne conditionne pas cette reprise en MANUEL. ARRÊT annule la reprise et
+le watchdog, la sonde du boiler et les limites thermiques. AUTO utilise les mesures gPlugK pour le surplus ; l’appoint confort dû et autorisé reste indépendant du compteur. La courbe puissance/courant validée et la rampe restent requises. Pendant la même session, MANUEL peut reprendre la demande explicitement
+réglée pour la sélection en cours, sous les mêmes gardes. Une nouvelle sélection
+MANUEL repart à 0 %, en conservant les préférences. À la consigne, la demande
+MANUEL s’arrête et AUTO / Prévision reprend après de nouvelles vérifications. ARRÊT annule la reprise et
 la vérification du DAC peut continuer à zéro.
 
 Un ACK I²C confirme un échange de données. L’identité du DAC, le courant
@@ -84,6 +92,10 @@ Les préférences Alpha.18 sont conservées dans le fichier v3 sous `legacy` ;
 un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
 quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Le format v3 et la base SQLite sont conservés.
+
+## Retour arrière vers Alpha.28
+
+Arrêter l’application et réaliser une sauvegarde complète vérifiée. Démarrer Alpha.28 en ARRÊT avec les préférences B3 et les bases actives dans /data. Ne pas désinstaller l’application ni restaurer d’anciennes bases sur les acquisitions récentes.
 
 ## Retour arrière vers Alpha.27
 

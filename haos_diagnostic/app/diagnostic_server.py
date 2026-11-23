@@ -279,20 +279,34 @@ class Diagnostic:
         self.migrated_forecast_solar_entry_id = ""
         self.settings_error = None
         self.stop_persistence_pending = False
+        # A remembered slider setting is a preference, never a new command.
+        self._manual_pending_percent = 0.0
         configured_options = dict(options)
+        configured_options.pop("requested_mode", None)
+        settings_existed = (self.user_settings_path is not None and
+                            self.user_settings_path.exists())
         if self.user_settings_path is not None:
             try:
                 options, self.migrated_forecast_solar_entry_id = read_settings(
-                    self.user_settings_path, options)
+                    self.user_settings_path, configured_options)
                 parse_options(options)
                 self.stop_persistence_pending = stop_marker(self.user_settings_path).exists()
             except (OSError, ValueError, TypeError) as exc:
                 self.settings_error = str(exc)[:160]
                 options = configured_options
                 LOG.error('Préférences invalides ou indisponibles ; démarrage en arrêt : %s', exc)
-        self.requested_mode = None if self.settings_error else options.get('requested_mode')
-        if self.stop_persistence_pending:
+        stored_mode = options.get('requested_mode') if settings_existed else None
+        # B3 already persists operator mode selections. Only explicit stops
+        # write ARRET. Faults and thermal inhibition leave that intent intact.
+        if self.settings_error:
+            self.requested_mode = None
+        elif (self.stop_persistence_pending or stored_mode == 'ARRET'
+              or (settings_existed and stored_mode is None)):
             self.requested_mode = 'ARRET'
+        else:
+            self.requested_mode = 'AUTO'
+        if self.requested_mode == 'AUTO':
+            options = {**options, 'predictive_target_enabled': True}
         self.dac_fault_latched = options.get('dac_fault_latched', False) if not self.settings_error else False
         self.options = parse_options(options)
         self.restore_status = ('Aucun état mémorisé valide ; démarrage en ARRÊT' if self.requested_mode is None else
@@ -334,6 +348,8 @@ class Diagnostic:
         self.startup_temperature_after = datetime.now(timezone.utc)
         self.auto_meter_after = None
         self._backup_next_step = None
+        self._backup_cycle_deadline = None
+        self._backup_completed_deadline = None
         self.watchdog_profile = None
         self.watchdog_opening = False
         self.calibration = calibration_store
@@ -438,6 +454,7 @@ class Diagnostic:
             if generation != self._control_generation:
                 self.regulator.invalid_data('Output mode changed; discard old automatic command')
                 self._backup_next_step = None
+                self._backup_cycle_deadline = None
                 if not self.output.snapshot()['auto_suspended']:
                     self._last_meter_report = None
                     self._last_meter_reports = None
@@ -603,12 +620,36 @@ class Diagnostic:
                 self.comfort = plan_comfort(self.options, now, water_c, self.profile)
                 self.comfort["temperature_source"] = self.temperature_source
                 backup = self.comfort['backup_power_w']
-                backup_due = (self.options['grid_backup_enabled'] and backup > 0
-                              and water_c < self.options['weather_min_c'])
+                deadline = self.comfort['deadline_utc']
+                automatic = self.output.snapshot()['mode'] == 'AUTO_REEL'
+                # A latched cycle is not permission for unbounded grid import.
+                # Once its original Zurich deadline's grace period has passed,
+                # end that occurrence even if water is still below Tmin.
+                if (self._backup_cycle_deadline is not None and
+                        now > (datetime.fromisoformat(self._backup_cycle_deadline)
+                               + timedelta(minutes=self.options['comfort_grace_minutes']))):
+                    self._backup_completed_deadline = self._backup_cycle_deadline
+                    self.regulator.invalid_data('Comfort backup grace expired')
+                    self._backup_cycle_deadline = None
+                    self._backup_next_step = None
+                if (not automatic or not self.options['grid_backup_enabled']
+                        or water_c >= self.options['weather_min_c']
+                        or water_c >= self.options['boiler_max_temp_c']):
+                    if self._backup_cycle_deadline and water_c >= self.options['weather_min_c']:
+                        self._backup_completed_deadline = self._backup_cycle_deadline
+                    if self._backup_cycle_deadline:
+                        # Never carry an import-backed setpoint into PV control.
+                        self.regulator.invalid_data('Comfort backup cycle ended')
+                    self._backup_cycle_deadline = None
+                if (automatic and self.options['grid_backup_enabled'] and backup > 0
+                        and water_c < self.options['weather_min_c']
+                        and deadline != self._backup_completed_deadline
+                        and self._backup_cycle_deadline is None):
+                    self._backup_cycle_deadline = deadline
+                backup_due = self._backup_cycle_deadline is not None
                 backup_tick = False
                 # Regulate only when real AUTO is selected. The meter already
                 # includes the current boiler load; never add an invented load.
-                automatic = self.output.snapshot()['mode'] == 'AUTO_REEL'
                 if not automatic:
                     self._backup_next_step = None
                     self.regulator.invalid_data('Output not in AUTO')
@@ -632,10 +673,7 @@ class Diagnostic:
                         if self._backup_next_step is None or clock >= self._backup_next_step:
                             backup_tick = True
                             self._backup_next_step = clock + self.options['sample_seconds']
-                        gap_w = ((self.options['weather_min_c'] - water_c)
-                                 * self.options['weather_volume_l'] * 1.163
-                                 * 3600 / self.options['sample_seconds'])
-                        total = min(backup, gap_w, self.options['max_power_w'],
+                        total = min(self.options['max_power_w'],
                                     old_command + (300 if backup_tick else 0))
                         self.regulator.command_w = total
                         decision = Decision(total, 'COMFORT_BACKUP',
@@ -705,6 +743,7 @@ class Diagnostic:
                         "meter_w": round(meter_w),
                     })
             except Exception as exc:
+                self._backup_cycle_deadline = None
                 if failure_stage == 'meter':
                     self.alarms.observe('A004', 'DEFAUT', now)
                     self.alarms.observe('A001', 'NON_VERIFIABLE', now)
@@ -770,6 +809,7 @@ class Diagnostic:
                 if not auto_healthy and self.output.snapshot()['mode'] == 'AUTO_REEL':
                     self.regulator.invalid_data('AUTO safety gate unavailable')
                     self._backup_next_step = None
+                    self._backup_cycle_deadline = None
                 if isinstance(self.client, AsyncControlInputs) and grid_generation is not None:
                     # Publishing a newer cache entry and committing a command
                     # are serialized. A superseded calculation fails closed.
@@ -789,6 +829,7 @@ class Diagnostic:
                         decision.command_w if self.latest['control_state'] != 'FAULT' else 0,
                         generation, auto_healthy, new_sample=new_sample, now=now)
             except Exception as exc:
+                self._backup_cycle_deadline = None
                 observation_i2c = getattr(exc, 'i2c_timing', None)
                 LOG.error('Défaut de commande AUTO du DAC ; état physique inconnu')
                 self.latest['control_state'] = 'FAULT'
@@ -853,6 +894,9 @@ class Diagnostic:
                          else 0 if output['mode'] == 'AUTO' else None)
             self.latest['requested_boiler_w'] = round(requested) if requested is not None else None
             self.comfort['applied_boiler_w'] = self.latest['requested_boiler_w']
+            self.comfort['backup_requested_w'] = (
+                self.latest['requested_boiler_w']
+                if self.latest['control_state'] == 'COMFORT_BACKUP' else 0)
             # Progress is a liveness report, not an aggregate sensor-health
             # flag. An invalid AUTO calculation has already been inhibited by
             # observe_auto; MANUEL does not depend on the grid meter at all.
@@ -1092,12 +1136,19 @@ class Diagnostic:
                 self.boiler_temperature_diagnostic['report_at'],
                 self._boiler_refresh_result, reason)
             self._last_thermal_log_status = status
-        try:
-            self.output.observe_temperature(measurement, self.options['boiler_max_temp_c'],
-                                            self.options['boiler_temperature_max_age_seconds'], now)
-        except OSError:
-            LOG.error('DAC thermal stop failed; physical output unknown')
-            self._latch_dac_fault()
+        # Serialize the observation and its transition with user mode changes:
+        # an old MANUEL completion must not cancel a newer MANUEL selection.
+        with self.startup_lock:
+            try:
+                manual_completed = self.output.observe_temperature(
+                    measurement, self.options['boiler_max_temp_c'],
+                    self.options['boiler_temperature_max_age_seconds'], now)
+            except OSError:
+                LOG.error('DAC thermal stop failed; physical output unknown')
+                self._latch_dac_fault()
+            else:
+                if manual_completed:
+                    self._complete_manual_to_auto_locked()
         self._heartbeat_capability('thermal', self.output.snapshot()['mode'])
 
     def set_output(self, values):
@@ -1162,10 +1213,14 @@ class Diagnostic:
             raise ValueError('Confirmer explicitement le mode physique')
         self._check_output_configuration(requested)
         changes = {'requested_mode': requested}
+        if requested == 'AUTO':
+            changes['predictive_target_enabled'] = True
         if requested == 'MANUEL':
             ceiling = self.options['boiler_max_temp_c']
-            changes['manual_target_c'] = number(values.get('target_c', ceiling), 30, ceiling)
-            changes['manual_percent'] = 0.
+            remembered_target = self.options['manual_target_c']
+            target = number(values.get('target_c', remembered_target or ceiling), 30, ceiling)
+            changes['manual_target_c'] = target
+            values = {**values, 'target_c': target}
         waiting = self.dac_fault_latched or self.resume_pending
         with self.output.lock:
             if not waiting:
@@ -1184,7 +1239,9 @@ class Diagnostic:
         self.stop_persistence_pending = False
         self.settings_error = None
         self.requested_mode = requested
-        self.options.update({key: value for key, value in changes.items() if key != 'requested_mode'})
+        if requested == 'MANUEL':
+            self._manual_pending_percent = 0.0
+        self.options.update({key: value for key, value in changes.items() if key in B3_FIELDS})
         self.restore_status = None
         self.auto_meter_after = None
         if not waiting and not self.dac_fault_latched:
@@ -1199,7 +1256,13 @@ class Diagnostic:
                 self._latch_dac_fault()
                 self._queue_output_restore()
                 raise
-        if self.output.snapshot()['mode'] == 'AUTO' or self.dac_fault_latched:
+        if (requested == 'MANUEL' and not waiting and not self.dac_fault_latched
+                and self.output.snapshot()['mode'] == 'AUTO'
+                and valid_boiler_temperature(self.output.temperature,
+                                             datetime.now(timezone.utc), self.output.max_age)
+                and self.output.temperature.value >= self.options['manual_target_c']):
+            self._complete_manual_to_auto_locked()
+        elif self.output.snapshot()['mode'] == 'AUTO' or self.dac_fault_latched:
             self._queue_output_restore()
         else:
             self.startup_reason = None
@@ -1220,6 +1283,7 @@ class Diagnostic:
             raise
         self.settings_error = None
         self.options['manual_percent'] = percent
+        self._manual_pending_percent = percent
         with self.output.lock:
             if self.output.mode != 'MANUEL_REEL' or self.dac_fault_latched:
                 return
@@ -1297,6 +1361,30 @@ class Diagnostic:
         self.startup_reason = 'Reprise ' + self.requested_mode + ' : vérifications en cours'
         self.startup_zeroed = False
         self.startup_temperature_after = datetime.now(timezone.utc)
+
+    def _complete_manual_to_auto_locked(self):
+        """Called with startup_lock after a zeroed, thermally completed MANUEL.
+
+        Do not record an automatic mode change as a new user command.
+        """
+        if (self.requested_mode != 'MANUEL' or self.stop_persistence_pending
+                or self.dac_fault_latched or self.settings_error):
+            return
+        try:
+            if self.user_settings_path is not None:
+                write_b3_settings(self.user_settings_path,
+                                  {'requested_mode': 'AUTO', 'predictive_target_enabled': True})
+        except (OSError, ValueError) as exc:
+            self.settings_error = str(exc)[:160]
+            self.startup_reason = 'Transition MANUEL → AUTO suspendue : préférences indisponibles'
+            return  # Already zeroed; no automatic output until storage recovers.
+        self.requested_mode = 'AUTO'
+        self.options['predictive_target_enabled'] = True
+        self.regulator.invalid_data('MANUEL terminé ; consigne précédente effacée')
+        self._backup_next_step = None
+        self._backup_cycle_deadline = None
+        self.auto_meter_after = None
+        self._queue_output_restore()
 
     def begin_auto_start(self):
         """Request a new guarded start without replaying the previous output."""
@@ -1422,7 +1510,10 @@ class Diagnostic:
                     ceiling = self.options['boiler_max_temp_c']
                     target = self.options['manual_target_c'] if requested == 'MANUEL' else None
                     target = ceiling if target is None else target
-                    if temperature.value >= min(target, ceiling):
+                    if requested == 'MANUEL' and temperature.value >= min(target, ceiling):
+                        self._complete_manual_to_auto_locked()
+                        return
+                    if temperature.value >= ceiling:
                         raise ValueError('cible ou plafond thermique atteint')
                     self._require_watchdog()
                     mode = 'AUTO_REEL' if requested == 'AUTO' else 'MANUEL_REEL'
@@ -1433,7 +1524,7 @@ class Diagnostic:
                         self.output.reason = 'AUTO prêt : attente de nouvelles mesures réseau'
                     else:
                         self._require_watchdog()
-                        self.output.command({'action': 'manual', 'percent': self.options['manual_percent']})
+                        self.output.command({'action': 'manual', 'percent': self._manual_pending_percent})
             except OSError:
                 self._latch_dac_fault()
                 self.startup_reason = 'Reprise suspendue : récupération automatique du DAC à 0 mA'
@@ -1745,7 +1836,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.28",
+            "version": "1.0.0-alpha.30",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,

@@ -90,7 +90,7 @@ async function refresh(){
   const c=p.comfort||{};
   $("comfort-state").textContent=c.reason||"Plan de confort indisponible";
   const instant=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZoneName:'shortOffset'}):'—';
-  $("comfort-details").textContent="Minimum à "+instant(c.deadline)+" · dernier départ prudent "+instant(c.latest_start)+" · appoint demandé "+watts(c.backup_power_w)+" · appoint "+(o.grid_backup_enabled?'autorisé pour le minimum':'interdit')+".";
+  $("comfort-details").textContent="Minimum à "+instant(c.deadline)+" · dernier départ prudent "+instant(c.latest_start)+" · appoint demandé "+watts(c.backup_requested_w ?? c.backup_power_w)+" · appoint "+(o.grid_backup_enabled?'autorisé pour le minimum':'interdit')+".";
 
   }catch(err){if(serial!==statusSerial)return;document.body.classList.add("disconnected");$("conn-dot").className="statusdot bad";$("conn-text").textContent=String(err);$("comfort-state").textContent="Plan périmé : communication perdue";$("boiler-quick-temp").textContent="—";}
 }

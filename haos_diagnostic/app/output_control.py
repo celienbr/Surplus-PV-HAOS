@@ -94,7 +94,12 @@ class OutputControl:
                 elif not self._temperature_ok(now):
                     self._stop("Température invalide ou périmée ; retour ARRÊT")
                 elif self.mode != "AUTO_REEL" and self.temperature.value >= min(self.target_c, ceiling):
-                    self._stop("Consigne thermique atteinte ; retour ARRÊT")
+                    # A successful zero acknowledgement is required before
+                    # the coordinator may transition the MANUEL intent to AUTO.
+                    zero_possible = self.dac.ready
+                    self._stop("Consigne thermique atteinte ; MANUEL terminé")
+                    return bool(zero_possible)
+            return False
 
     def check_freshness(self, now=None):
         with self.lock:

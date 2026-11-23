@@ -27,7 +27,7 @@
   const alert=el('boiler-alert');
   alert.hidden=!s.error&&!s.startup_pending&&fresh;
   alert.textContent=s.error?'Défaut actif : voir les diagnostics.':
-   s.startup_pending?'Reprise en attente : confirmer le mode avant une nouvelle commande.':
+   s.startup_pending?'Reprise en attente : vérifications de sécurité en cours.':
    !fresh?'Température du boiler non validée : commande de chauffe suspendue.':'';
  }
  function render(s){

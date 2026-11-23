@@ -1,3 +1,9 @@
+# 1.0.0-alpha.30
+
+- AUTO / Prévision au démarrage, avec reprise sous conditions et persistance de l’ARRÊT volontaire.
+- Retour à AUTO après la consigne MANUEL, avec demande nulle pendant la transition et conservation des réglages.
+- Appoint confort explicite avec rampe et cycle borné, indépendant du recalcul du dernier départ prudent.
+
 # 1.0.0-alpha.28 — candidat non validé
 
 Interface de supervision, jauge de commande et graphique 48 h. Les puissances demandées restent des consignes, non des mesures physiques.

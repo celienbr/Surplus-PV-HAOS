@@ -174,11 +174,11 @@ function renderComfort(plan,options={}){
  const c=plan||{};
  const labels={MINIMUM_REACHED:'Minimum atteint',WAITING_SURPLUS:'Attente du surplus',BACKUP_DUE:'Départ prudent atteint',INSUFFICIENT_TIME:'Temps insuffisant',MISSED_DEADLINE:'Échéance manquée',MISSED_DISABLED:'Échéance manquée · appoint interdit',THERMAL_LIMIT:'Plafond thermique atteint',WAITING:'En attente',FAULT:'Calcul inhibé',INVALID:'Paramètres invalides',COMFORT_MET:'Minimum atteint',SATISFIED:'Minimum atteint',SOLAR_EXPECTED:'Solaire attendu',WAIT_SOLAR:'Attente du solaire',WAITING_SOLAR:'Attente du solaire',WAIT_BACKUP:'Appoint différé',WAITING_BACKUP:'Appoint différé',BACKUP_REQUIRED:'Appoint requis',BACKUP_ACTIVE:'Appoint demandé',BACKUP:'Appoint demandé',IMPOSSIBLE:'Échéance hors capacité',BACKUP_DISABLED:'Appoint interdit',UNAVAILABLE:'Plan indisponible',SURPLUS_ONLY:'Surplus uniquement'};
  const code=c.status||'WAITING';
- tag('comfort-status',!plan?'':c.theoretical_possible===false||['FAULT','INVALID','IMPOSSIBLE','UNAVAILABLE'].includes(code)?'bad':c.backup_power_w>0?'warn':'ok',labels[code]||code);
+ tag('comfort-status',!plan?'':c.theoretical_possible===false||['FAULT','INVALID','IMPOSSIBLE','UNAVAILABLE'].includes(code)?'bad':(c.backup_requested_w ?? c.backup_power_w)>0?'warn':'ok',c.backup_requested_w>0?labels.BACKUP_ACTIVE:labels[code]||code);
  text('comfort-reason',(c.reason||'Aucun plan reçu. Les valeurs manquantes ne valent pas zéro.')+(c.gate_state?' Filtre de commande : '+c.gate_state+'.':''));
  text('comfort-deadline',swissInstant(c.deadline));text('comfort-start',swissInstant(c.latest_start));
  text('comfort-need',kwh(c.energy_needed_kwh));text('comfort-solar',kwh(c.solar_before_deadline_kwh));
- text('comfort-backup-energy',kwh(c.backup_energy_kwh));text('comfort-backup-power',watts(c.backup_power_w));
+ text('comfort-backup-energy',kwh(c.backup_energy_kwh));text('comfort-backup-power',watts(c.backup_requested_w ?? c.backup_power_w));
  text('comfort-feasibility',c.theoretical_possible===true?'Capacité suffisante selon le modèle ; confort réel non garanti.':c.theoretical_possible===false?'Minimum non garanti : délai, puissance ou autorisation insuffisants.':'Faisabilité non évaluée.');
  text('comfort-forecast','Prévisions : '+(c.forecast_status||'non évaluées')+' · appoint réseau '+(options.grid_backup_enabled===true?'autorisé uniquement jusqu’au minimum':'interdit')+'.');
 }
