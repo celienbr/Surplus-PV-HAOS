@@ -103,3 +103,44 @@
   }
   window.SurplusHomeBoiler = {render, offline};
 })();
+
+/* Independent read-only energy view. Values are only shown when their
+ * provenance and coverage permit it; no PV/grid split is inferred. */
+(() => {
+  const el = id => document.getElementById(id);
+  if (!el('ce-bar')) return;
+  const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+  const num = n => n.toLocaleString('fr-CH', {minimumFractionDigits:1, maximumFractionDigits:1});
+  const kwh = n => valid(n) ? num(n)+' kWh' : 'indisponible';
+  function render(data) {
+    el('ce-remaining').textContent = data.comfort_met ? 'Confort atteint' : kwh(data.remaining_kwh);
+    el('ce-remaining-label').textContent = data.comfort_met ? '' : valid(data.remaining_kwh) ? 'à fournir' : 'besoin restant indisponible';
+    el('ce-reference').textContent = kwh(data.reference_kwh);
+    el('ce-provided').textContent = kwh(data.provided_kwh);
+    const bar=el('ce-bar'), legend=el('ce-legend'); bar.replaceChildren(); legend.replaceChildren();
+    const split=valid(data.pv_kwh)&&valid(data.grid_kwh)&&valid(data.provided_kwh)&&Math.abs(data.pv_kwh+data.grid_kwh-data.provided_kwh)<0.001;
+    const parts=split ? [['pv','Surplus PV',data.pv_kwh],['grid','Réseau',data.grid_kwh]] :
+      valid(data.provided_kwh) ? [['unknown','Origine indéterminée',data.provided_kwh]] : [];
+    if(valid(data.remaining_kwh))parts.push(['rest','À fournir',data.remaining_kwh]);
+    const denominator=valid(data.reference_kwh)?data.reference_kwh:null;
+    for(const [kind,label,value] of parts){
+      if (denominator>0 && value>0) {
+        const segment=document.createElement('span');segment.className='ce-segment ce-'+kind;
+        segment.style.width=(value/denominator*100)+'%'; segment.textContent=num(value);bar.append(segment);
+        requestAnimationFrame(()=>{if(segment.isConnected && segment.scrollWidth>segment.clientWidth)segment.textContent='';});
+      }
+      const item=document.createElement('span'), swatch=document.createElement('i');swatch.className='ce-'+kind;
+      item.append(swatch,document.createTextNode(label+' : '+kwh(value)));legend.append(item);
+    }
+    el('ce-note').textContent='Depuis minuit (Europe/Zurich) : énergie de commande estimée, non mesurée. '+
+      (split?'':'Répartition indisponible. ')+
+      (valid(data.provided_kwh)?'Cumul jusqu’au dernier relevé disponible.':'Cumul indisponible : historique incomplet ou commande inconnue.');
+  }
+  window.SurplusComfortEnergy = {render};
+  let busy=false;
+  async function update(){if(busy)return;busy=true;try{
+    const response=await fetch('./api/comfort-energy',{cache:'no-store',signal:AbortSignal.timeout(12000)});
+    if(!response.ok)throw Error('indisponible');render(await response.json());
+  }catch(_){render({});}finally{busy=false;}}
+  update();setInterval(update,30000);
+})();

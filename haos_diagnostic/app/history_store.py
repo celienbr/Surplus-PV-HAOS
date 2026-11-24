@@ -18,6 +18,7 @@ from threading import RLock
 import json
 import logging
 import sqlite3
+import secrets
 
 LOG = logging.getLogger(__name__)
 RETENTION = timedelta(hours=48)
@@ -70,6 +71,8 @@ class HistoryStore:
                 status TEXT NOT NULL, coverage TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS output_requests_v1(
                 timestamp TEXT PRIMARY KEY, requested_w INTEGER, mode TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS comfort_energy_samples(
+                timestamp TEXT PRIMARY KEY, requested_w INTEGER, session TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS forecasts(
                 timestamp TEXT PRIMARY KEY, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS archived_forecasts(
@@ -81,6 +84,7 @@ class HistoryStore:
             CREATE INDEX IF NOT EXISTS history_log_time ON technical_logs(timestamp);
         """)
         self.db.commit()
+        self._energy_session = secrets.token_hex(16)
         self._last_maintenance = None
 
     def close(self):
@@ -100,6 +104,8 @@ class HistoryStore:
                     "INSERT OR REPLACE INTO measurements VALUES (?,?,?,?,?)",
                     (stamp, grid, None, status, coverage))
                 if 'requested_boiler_w' in state:
+                    self.db.execute('INSERT OR REPLACE INTO comfort_energy_samples VALUES (?,?,?)',
+                                    (stamp, requested, self._energy_session))
                     mode = str(state.get('output_control', {}).get('mode') or 'UNKNOWN')[:40]
                     self.db.execute('INSERT OR REPLACE INTO output_requests_v1 VALUES (?,?,?)',
                                     (stamp, requested, mode))

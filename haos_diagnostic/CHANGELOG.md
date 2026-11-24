@@ -1,3 +1,8 @@
+# 1.0.0-alpha.31
+
+- Barre de confort en lecture seule, estimation de commande et indication des données indisponibles.
+- Suivi rapide du surplus PV à chaque nouveau relevé ; appoint confort toujours temporisé.
+
 # 1.0.0-alpha.30
 
 - AUTO / Prévision au démarrage, avec reprise sous conditions et persistance de l’ARRÊT volontaire.

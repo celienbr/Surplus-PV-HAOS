@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.30
+# Surplus PV — Home Assistant OS 1.0.0-alpha.31
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.28
+## Mise à jour depuis Alpha.30
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.30, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.31, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Au démarrage, AUTO / Prévision est sélectionné et la chauffe reprend après
@@ -92,6 +92,10 @@ Les préférences Alpha.18 sont conservées dans le fichier v3 sous `legacy` ;
 un premier enregistrement B3 conserve aussi une sauvegarde `.pre-b3.backup`
 quand un fichier existait. Sans plafond configuré, la commande réelle reste
 inhibée. Le format v3 et la base SQLite sont conservés.
+
+## Retour arrière vers Alpha.30
+
+Demander ARRÊT, arrêter l'application, sauvegarder intégralement /data et conserver les acquisitions récentes. Restaurer le code Alpha.30 de la même application sans désinstallation ; ne pas écraser SQLite ni les préférences récentes. Vérifier ARRÊT et les réglages avant reprise.
 
 ## Retour arrière vers Alpha.28
 
@@ -177,3 +181,5 @@ les champs B3 restent archivés pour une reprise ou conversion contrôlée.
 
 Les protections indépendantes TH1/STB1, le watchdog Omron et le secours S2
 gardent leur rôle matériel. Le propriétaire a déclaré le 21 novembre 2026 que le boiler et son circuit sont raccordés, que la sonde fonctionne, que la chauffe a été vérifiée et que ses validations matérielles sont terminées sans réserve restante selon sa déclaration. Les anciennes réserves B01–B10 restent traçables ; leur rapprochement documentaire avec les pièces disponibles reste à effectuer. Les essais logiciels ne mesurent ni les contacts, ni le courant analogique, ni la chaîne thermique.
+
+La barre de confort estime la commande depuis minuit en Europe/Zurich. Le cumul est indisponible en cas de lacune ou de redémarrage ; l'origine PV/réseau n'est pas établie. Ce n'est pas une mesure physique.

@@ -26,6 +26,7 @@ from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .predictive_target import predictive_target
 from .history_store import HistoryStore, parse_time
 from .energy_dashboard import EnergyDashboard, live_grid
+from .comfort_energy import daily_requested_estimate
 from .pv_actual import PVAcquisition
 from .gp8600 import make_dac, number
 from .output_control import OutputControl
@@ -402,8 +403,10 @@ class Diagnostic:
         self.regulator = SurplusRegulator(Parameters(
             max_power_w=self.options["max_power_w"],
             target_export_w=self.options["target_export_w"],
-            gain=0.5,
-            max_step_w=300,
+            # Track the available PV surplus on each fresh meter report.
+            # Grid-backed comfort heating uses its own timed ramp.
+            gain=1.0,
+            max_step_w=self.options["max_power_w"],
             temp_limit_c=self.options["boiler_max_temp_c"],
         ))
         self.lock = Lock()
@@ -1836,7 +1839,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.30",
+            "version": "1.0.0-alpha.31",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1968,6 +1971,28 @@ def handler_factory(diag: Diagnostic):
             elif path in ("/boiler", "/boiler.html"):
                 body = BOILER_VIEW.read_bytes()
                 content_type = "text/html; charset=utf-8"
+            elif path == "/api/comfort-energy":
+                now = datetime.now(timezone.utc)
+                with diag.lock:
+                    with diag.output.lock:
+                        temperature = diag.output.temperature
+                        fresh = valid_boiler_temperature(temperature, now, diag.output.max_age)
+                        water = temperature.value if fresh else None
+                    options = dict(diag.options)
+                try:
+                    need = plan_comfort(options, now, water)['energy_needed_kwh'] if water is not None else None
+                    data = daily_requested_estimate(diag.history_store, now) if diag.history_store else {
+                        'provided_kwh': None, 'pv_kwh': None, 'grid_kwh': None,
+                        'period_start': None, 'through': None, 'timezone': 'Europe/Zurich'}
+                    data['remaining_kwh'] = need
+                    data['comfort_met'] = water is not None and water >= options['weather_min_c']
+                    data['reference_kwh'] = (data['provided_kwh'] + need
+                        if data['provided_kwh'] is not None and need is not None else None)
+                except (ValueError, sqlite3.Error, OSError):
+                    data = {'provided_kwh': None, 'pv_kwh': None, 'grid_kwh': None,
+                            'remaining_kwh': None, 'reference_kwh': None, 'comfort_met': False}
+                body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
+                content_type = 'application/json; charset=utf-8'
             elif path == "/api/output":
                 body = json.dumps({**diag.output_status(),
                                    "boiler_temperature_diagnostic": dict(diag.boiler_temperature_diagnostic),
