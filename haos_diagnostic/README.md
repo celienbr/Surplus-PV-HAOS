@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.31
+# Surplus PV — Home Assistant OS 1.0.0-alpha.32
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.30
+## Mise à jour depuis Alpha.31
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.31, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.32, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Au démarrage, AUTO / Prévision est sélectionné et la chauffe reprend après
@@ -182,4 +182,36 @@ les champs B3 restent archivés pour une reprise ou conversion contrôlée.
 Les protections indépendantes TH1/STB1, le watchdog Omron et le secours S2
 gardent leur rôle matériel. Le propriétaire a déclaré le 21 novembre 2026 que le boiler et son circuit sont raccordés, que la sonde fonctionne, que la chauffe a été vérifiée et que ses validations matérielles sont terminées sans réserve restante selon sa déclaration. Les anciennes réserves B01–B10 restent traçables ; leur rapprochement documentaire avec les pièces disponibles reste à effectuer. Les essais logiciels ne mesurent ni les contacts, ni le courant analogique, ni la chaîne thermique.
 
-La barre de confort estime la commande depuis minuit en Europe/Zurich. Le cumul est indisponible en cas de lacune ou de redémarrage ; l'origine PV/réseau n'est pas établie. Ce n'est pas une mesure physique.
+## Bilan photovoltaïque quotidien
+
+La page Principale réunit la puissance demandée, l’énergie de confort et la
+production du jour. Le vert représente le même cumul solaire du boiler dans
+les deux barres d’énergie. Le calcul utilise la production AC Sofar et le
+bilan gPlugK. Activer `pv_self_consumption_topology_verified` seulement après
+confirmation de l’absence de batterie et d’autre source ou flux non comptabilisé.
+
+Renseigner `pv_actual_power_entity` et, si disponible, `boiler_actual_power_entity`
+pour la puissance active du boiler en W ou kW. Avec cette mesure dédiée,
+une perte du capteur rend l’origine indisponible. Sans mesure dédiée,
+l’application estime la puissance uniquement à partir d’une commande
+acquittée, récente et couverte par une courbe puissance/courant mesurée et
+confirmée. Une consigne de secours, un courant hors courbe ou une commande
+non confirmée laissent l’origine inconnue.
+
+Les deux canaux réseau et tous les capteurs associés doivent être récents,
+avec au plus 15 secondes entre le plus ancien rapport et le plus récent.
+Le bilan refuse un export supérieur à la production ou une consommation
+négative des autres usages, avec une tolérance supplémentaire de 0 W.
+Les intervalles de plus de 180 secondes, les transitions ambiguës et les
+lacunes sont exclus. Le cumul utilise les secondes écoulées depuis minuit
+en Europe/Zurich et s’arrête au dernier relevé applicable. Le compteur
+Solarman du jour peut fournir la production totale indépendamment.
+En Diagnostic, consulter la couverture et la date du dernier relevé.
+
+## Retour arrière vers Alpha.31
+
+Demander ARRÊT, arrêter l’application et sauvegarder intégralement /data.
+Restaurer le code Alpha.31 de la même application sans désinstaller celle-ci.
+Conserver les bases et préférences récentes. La table du bilan est additive
+et peut rester dans SQLite. Vérifier ARRÊT, les réglages et l’historique avant
+toute reprise.

@@ -26,8 +26,9 @@ from .profile_forecast import make_hourly_profile, read_current_temperature_c
 from .predictive_target import predictive_target
 from .history_store import HistoryStore, parse_time
 from .energy_dashboard import EnergyDashboard, live_grid
-from .comfort_energy import daily_requested_estimate
-from .pv_actual import PVAcquisition
+from .comfort_energy import ZONE, daily_requested_estimate
+from .pv_actual import PVAcquisition, read_observation
+from .energy_balance import DailyEnergyBalance, synchronized_sample
 from .gp8600 import make_dac, number
 from .output_control import OutputControl
 from .dac_calibration import CalibrationStore
@@ -208,7 +209,7 @@ def parse_options(source: dict) -> dict:
         raise ValueError("PAC reference temperature must be below heating balance")
     if options["weather_reserve_w"] + options["target_export_w"] > 6000:
         raise ValueError("Total export reserve too large")
-    for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity', 'pv_actual_energy_total_entity'):
+    for key in ('pv_actual_power_entity', 'pv_actual_energy_today_entity', 'pv_actual_energy_total_entity', 'boiler_actual_power_entity'):
         entity = source.get(key, '')
         if not isinstance(entity, str) or (entity and (
                 not entity.startswith('sensor.') or len(entity) > 255 or
@@ -395,6 +396,14 @@ class Diagnostic:
         self.record_dropped = 0
         self.energy_dashboard = EnergyDashboard(history_store) if history_store else None
         self.pv_actual = PVAcquisition(self.options, self.client, history_store)
+        self.balance_grid_epoch = 0
+        self.balance_grid_direction = 0
+        self.energy_balance = None
+        if history_store is not None and self.options['pv_actual_power_entity']:
+            try:
+                self.energy_balance = DailyEnergyBalance(history_store)
+            except (sqlite3.Error, OSError):
+                LOG.exception('Historique du bilan photovoltaïque indisponible')
         self._last_logged_status = None
         self._last_comfort_label = None
         self._last_heartbeat = None
@@ -556,6 +565,13 @@ class Diagnostic:
                     grid_generation = None
                     self.alarms.observe('A004', 'DEFAUT', now)
 
+                if measurement_status != 'OK' or measurement_coverage != 'TWO_RECENT' or meter_w is None:
+                    self.balance_grid_epoch += 1
+                elif meter_w:
+                    direction = 1 if meter_w > 0 else -1
+                    if direction * self.balance_grid_direction < 0:
+                        self.balance_grid_epoch += 1
+                    self.balance_grid_direction = direction
                 temperature_invalid = True
                 failure_stage = 'thermal'
                 entity = self.options["boiler_temperature_entity"]
@@ -1839,7 +1855,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.31",
+            "version": "1.0.0-alpha.32",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,
@@ -1862,9 +1878,45 @@ class Diagnostic:
             "telemetry_queue_dropped": self.record_dropped,
             "control_timing": self.control_timing,
             "sensors": dict(self.sensor_diagnostics),
+            "balance_grid_epoch": self.balance_grid_epoch,
             "weather": dict(self.weather),
             "profile": dict(self.profile),
         }
+
+    def poll_pv_once(self, now=None):
+        if not self.pv_actual.enabled:
+            return
+        with self.lock:
+            grid_snapshot = dict(self.latest)
+        observations = self.pv_actual.poll(grid_snapshot, now)
+        if self.energy_balance is None:
+            return
+        entity = self.options['boiler_actual_power_entity']
+        meter = None
+        if entity:
+            try:
+                state = self.client.get_state(entity) if self.client is not None else None
+            except (OSError, RuntimeError, TypeError, ValueError):
+                state = None
+            meter = read_observation('power', entity, state, now or datetime.now(timezone.utc),
+                                     self.options['pv_actual_max_age_seconds'])
+        with self.lock:
+            grid_snapshot = {**self.latest, 'sensors': dict(self.sensor_diagnostics),
+                             'balance_grid_epoch': self.balance_grid_epoch}
+            command = None
+            if (meter is None and not self.dac_fault_latched and not self.resume_pending
+                    and grid_snapshot['control_state'] != 'COMFORT_BACKUP'):
+                heartbeat = self.heartbeat.snapshot()
+                if heartbeat['state'] == 'NORMAL' and heartbeat['driver'] == 'GPIO_REEL':
+                    command = self.output.energy_estimate(self.options['max_age_seconds'])
+        try:
+            now = now or datetime.now(timezone.utc)
+            sample = synchronized_sample(observations['power'], grid_snapshot, meter,
+                                         command, self.options, now)
+            self.energy_balance.observe(sample)
+        except (sqlite3.Error, OSError, ValueError):
+            self.energy_balance.previous = None
+            LOG.exception('Écriture du bilan photovoltaïque impossible')
 
     def loop(self, stop: Event) -> None:
         while not stop.is_set():
@@ -1981,9 +2033,26 @@ def handler_factory(diag: Diagnostic):
                     options = dict(diag.options)
                 try:
                     need = plan_comfort(options, now, water)['energy_needed_kwh'] if water is not None else None
-                    data = daily_requested_estimate(diag.history_store, now) if diag.history_store else {
-                        'provided_kwh': None, 'pv_kwh': None, 'grid_kwh': None,
-                        'period_start': None, 'through': None, 'timezone': 'Europe/Zurich'}
+                    data = {'provided_kwh': None, 'pv_kwh': None, 'grid_kwh': None,
+                            'period_start': now.astimezone(ZONE).replace(
+                                hour=0, minute=0, second=0, microsecond=0).isoformat(),
+                            'through': None, 'timezone': 'Europe/Zurich'}
+                    if diag.history_store:
+                        try:
+                            data.update(daily_requested_estimate(diag.history_store, now))
+                        except (sqlite3.Error, OSError, ValueError):
+                            LOG.warning('Cumul estimé du boiler indisponible')
+                    if diag.energy_balance:
+                        try:
+                            data.update(diag.energy_balance.daily(now))
+                        except (sqlite3.Error, OSError, ValueError):
+                            data['balance_status'] = 'Historique du bilan indisponible'
+                    if 'production_kwh' not in data:
+                        today = diag.pv_actual.snapshot(now)['today']
+                        if (today['status'] == 'OK' and
+                                parse_time(today['at']).astimezone(ZONE).date() == now.astimezone(ZONE).date()):
+                            data['production_kwh'] = today['value']
+                            data['production_through'] = today['at']
                     data['remaining_kwh'] = need
                     data['comfort_met'] = water is not None and water >= options['weather_min_c']
                     data['reference_kwh'] = (data['provided_kwh'] + need
@@ -2260,10 +2329,7 @@ def main():
     profile_worker.start()
     def pv_loop():
         while not stop.is_set():
-            if diag.pv_actual.enabled:
-                with diag.lock:
-                    grid_snapshot = diag.snapshot()
-                diag.pv_actual.poll(grid_snapshot)
+            diag.poll_pv_once()
             stop.wait(diag.options['pv_actual_sample_seconds'])
     pv_worker = Thread(target=pv_loop, daemon=True)
     pv_worker.start()

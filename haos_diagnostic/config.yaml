@@ -1,6 +1,6 @@
 name: "Surplus PV"
 slug: "surplus_pv_diagnostic"
-version: "1.0.0-alpha.31"
+version: "1.0.0-alpha.32"
 description: "Gestion du surplus photovoltaïque et du chauffe-eau"
 url: "https://github.com/celienbr/Surplus-PV-HAOS"
 arch:
@@ -46,6 +46,7 @@ options:
   forecast_today_entity: sensor.energy_production_today_remaining
   forecast_tomorrow_entity: sensor.energy_production_tomorrow
   forecast_solar_entry_id: ""
+  boiler_actual_power_entity: ""
   pv_actual_power_entity: ""
   pv_actual_energy_today_entity: ""
   pv_actual_energy_total_entity: ""
@@ -96,6 +97,7 @@ schema:
   forecast_today_entity: str
   forecast_tomorrow_entity: str
   forecast_solar_entry_id: str
+  boiler_actual_power_entity: str
   pv_actual_power_entity: str
   pv_actual_energy_today_entity: str
   pv_actual_energy_total_entity: str

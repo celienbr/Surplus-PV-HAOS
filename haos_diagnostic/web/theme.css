@@ -100,9 +100,9 @@ html.embedded .boiler-status>span{display:none}
 
 /* Alpha.27 UI pass: concise boiler controls in NORMAL; existing controls and diagnostics remain accessible. */
 .boiler-home-entry{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 18px;padding:13px 17px;margin:10px 0 12px;border-radius:14px;background:var(--panel-bg);border:1px solid var(--border-ui)}
-.boiler-home-entry>div{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+
 .boiler-home-entry strong{font-size:19px;color:var(--ink)}
-.boiler-home-entry span{color:var(--muted-ui);font-size:14px}
+
 .boiler-home-entry a{display:inline-flex;align-items:center;min-height:42px;padding:9px 15px;border-radius:10px;background:var(--accent-ui);color:var(--accent-ink);font-weight:800;text-decoration:none;font-size:14px}
 .boiler-home-entry a:focus-visible{outline:3px solid var(--nature);outline-offset:3px}
 .boiler-quick-state{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}
@@ -133,8 +133,6 @@ html[data-view-mode="normal"] .boiler-page>section.panel:first-of-type{display:n
 html[data-view-mode="normal"] #application-health-estimate{display:none}
 @media(max-width:640px){
  .boiler-home-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;padding:12px}
- .boiler-home-entry>div{grid-column:1;grid-row:1;display:block}
- .boiler-home-entry>div span{display:block}
  .boiler-home-entry>span{grid-column:1/-1;grid-row:2}
  .boiler-home-entry a{grid-column:2;grid-row:1;padding:8px 11px;font-size:13px}
  .boiler-quick-state{gap:8px}
@@ -151,9 +149,9 @@ html[data-view-mode="normal"] #application-health-estimate{display:none}
 .boiler-home-heading strong{font-size:20px}
 .boiler-home-heading span{color:var(--muted-ui)}
 .home-boiler-gauge{width:100%;min-width:0}
-.home-boiler-gauge-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px}
+.home-boiler-gauge-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-bottom:4px}
 .home-boiler-gauge-head label{font-size:15px;font-weight:700;color:var(--ink)}
-.home-boiler-gauge-head output{font-size:clamp(19px,3.3vw,27px);font-weight:850;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+.home-boiler-gauge-head output{font-size:clamp(19px,3.3vw,27px);font-weight:850;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
 #home-boiler-power{display:block;appearance:none;-webkit-appearance:none;width:100%;max-width:none;min-height:44px;height:44px;margin:0;padding:0;border:0;border-radius:0;background:transparent;opacity:1;touch-action:pan-y}
 #home-boiler-power::-webkit-slider-runnable-track{height:23px;border-radius:999px;border:1px solid var(--border-ui);background:linear-gradient(90deg,var(--solar-chart) 0% var(--home-level),var(--panel-soft) var(--home-level) 100%)}
 #home-boiler-power::-moz-range-track{height:23px;border-radius:999px;border:1px solid var(--border-ui);background:linear-gradient(90deg,var(--solar-chart) 0% var(--home-level),var(--panel-soft) var(--home-level) 100%)}
@@ -213,10 +211,27 @@ html[data-view-mode="normal"] .boiler-page #heat-state{display:none!important}
 @media(max-width:600px){#theme-slot{width:min(100%,360px);margin-left:0}}
 .comfort-energy{margin-top:16px;padding:15px;border:1px solid var(--border-ui);border-radius:12px;background:var(--panel-soft)}
 .comfort-energy-title,.comfort-energy-summary{display:flex;justify-content:space-between;gap:12px;align-items:start}
+.comfort-energy-title>strong{font-size:clamp(16px,4.4vw,23px)}
 .comfort-energy-title span,.comfort-energy-summary span,.comfort-energy p{color:var(--muted-ui);font-size:13px}
-.comfort-energy-summary{margin:12px 0;font-size:14px}.comfort-energy-summary>div:last-child{text-align:right;line-height:1.6}.comfort-energy-summary strong{display:block;font-size:25px;color:var(--ink)}.comfort-energy-summary span{display:block}
+.comfort-energy-summary{margin:12px 0;font-size:14px}.comfort-energy-summary>div:last-child{text-align:right;line-height:1.6}.comfort-energy-summary strong{display:block;font-size:clamp(19px,6vw,30px);color:var(--ink)}.comfort-energy-summary span{display:block}
+#ce-reference,#ce-provided{white-space:nowrap}
 .comfort-energy-bar{display:flex;overflow:hidden;height:34px;border-radius:8px;background:var(--input-bg);border:1px solid var(--border-ui)}
 .ce-segment{min-width:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;overflow:hidden;white-space:nowrap;color:#071524}
-.ce-pv{background:#59cf83}.ce-grid{background:#70b7ff}.ce-unknown{background:#aeb9c4}.ce-rest{background:repeating-linear-gradient(135deg,#c7ced3 0 6px,#a7b0b8 6px 9px)}
+.ce-pv{background:#59cf83}.ce-grid{background:#70b7ff}.ce-unknown{background:#aeb9c4}.ce-rest{color:#fff;background:repeating-linear-gradient(135deg,#303a49 0 6px,#505b6a 6px 9px)}
+.ce-house{background:#f8cc7c}.ce-export{background:#91dde1}
 .comfort-energy-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12px;color:var(--ink)}.comfort-energy-legend span{display:inline-flex;align-items:center;gap:5px}.comfort-energy-legend i{width:10px;height:10px;border-radius:2px;display:inline-block;flex:none}
 .comfort-energy p{margin:8px 0 0;line-height:1.4}.comfort-energy-bar:empty{display:none}
+
+
+#home-boiler-temperature{margin-left:auto;white-space:nowrap;font-size:clamp(20px,4vw,28px)}
+#home-boiler-comfort{flex-basis:100%}
+.pv-home .comfort-energy-title{align-items:baseline}
+.pv-home h2{margin:0;font-size:clamp(16px,3.3vw,22px)}
+#pv-home-total{white-space:nowrap;font-size:clamp(20px,4vw,28px)}
+.pv-home-day,.pv-home p.diagnostic-only{color:var(--muted-ui);margin:7px 0;font-size:13px}
+.ce-segment{flex:none}
+.ce-segment>span{visibility:hidden;white-space:nowrap;flex:none}
+.ce-segment.has-room>span{visibility:visible}
+.pv-surplus-track{height:29px;position:relative}
+#pv-surplus{display:block;text-align:center;margin-left:clamp(0%,var(--surplus-start),calc(100% - 130px));font-weight:700;font-size:13px;white-space:nowrap}
+.pv-surplus-track::after{content:"";position:absolute;bottom:2px;left:var(--surplus-start);right:0;height:6px;border:1px solid var(--accent-ui);border-bottom:0;border-radius:5px 5px 0 0}

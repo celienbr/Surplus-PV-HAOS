@@ -34,3 +34,10 @@ class PowerCurve:
             if power <= p1:
                 return i0 + (i1-i0) * (power-p0) / (p1-p0)
         return self.points[-1][1]
+
+    def power_for_current(self, current_ma):
+        if not self.points[0][1] <= current_ma <= self.points[-1][1]:
+            return None
+        for (p0, i0), (p1, i1) in zip(self.points, self.points[1:]):
+            if current_ma <= i1:
+                return p0 + (p1-p0) * (current_ma-i0) / (i1-i0)

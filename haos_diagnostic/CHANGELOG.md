@@ -1,3 +1,8 @@
+# 1.0.0-alpha.32
+
+- Page Principale à trois barres, température fraîche dans la carte Boiler.
+- Bilan AC quotidien depuis minuit avec origine du chauffage si les relevés le permettent.
+
 # 1.0.0-alpha.31
 
 - Barre de confort en lecture seule, estimation de commande et indication des données indisponibles.

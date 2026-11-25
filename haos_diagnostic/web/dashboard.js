@@ -33,11 +33,7 @@ function render(p){
  const age=(Date.now()-measuredAt)/1000;
  const measured=p.temperature_source==='HOME_ASSISTANT'&&isnum(output.temperature_c)&&
   Number.isFinite(age)&&age>=-2&&age<=(o.boiler_temperature_max_age_seconds??60);
- text('summary-grid',watts(p.meter_w));
- text('summary-temp',measured?celsius(output.temperature_c):'—');
- const manual=manualPower(output);
- const unconfirmed=output.error||output.startup_pending||output.dac_recovery?.pending;
- text('summary-power',unconfirmed?'—':manual ? manual.percent.toLocaleString('fr-CH')+' % DAC · '+watts(manual.nominalWatts)+' estimés' : output.mode==='AUTO_REEL'&&output.enabled===true?watts(output.auto_requested_power_w):output.mode==='AUTO'?'0 W':'—');
+ text('home-boiler-temperature',measured?celsius(output.temperature_c):'— °C');
  text('input-water',measured?celsius(output.temperature_c):'Inconnue · aucune mesure valide');
  text('boiler-headline',measured?celsius(output.temperature_c):'Température inconnue');
  const today=typeof w.gross_today_remaining_kwh==="number"?w.gross_today_remaining_kwh:prof.daily_today_remaining_kwh;
@@ -192,7 +188,7 @@ async function update(){
  renderApplicationHealth({application_health:{state:'NON_VERIFIABLE',alarms:(currentData?.application_health?.alarms||[]).map(a=>({...a,state:'NON_VERIFIABLE'}))}});
  text('application-health-mode','Connexion perdue · état actuel non confirmé.');
  window.SurplusHomeBoiler?.offline();text('home-boiler-mode','État inconnu · connexion perdue');
- text('summary-power','—');text('calc-heat','—');text('calc-heat-state','État non confirmé · connexion perdue');
+ text('home-boiler-temperature','— °C');text('calc-heat','—');text('calc-heat-state','État non confirmé · connexion perdue');
  tag('grid-tag','bad','Données périmées');text('calc-protection','État inconnu');
  text('fallback-grid','Communication interface perdue · état non confirmé');
  tag('comfort-status','bad','Plan périmé');text('comfort-reason','Communication perdue : le plan affiché ne confirme pas l’état actuel.');
@@ -215,21 +211,18 @@ async function updateSolarActual(){
    Number.isFinite(Date.parse(reading.valid_until||'')) && Date.now()<=Date.parse(reading.valid_until);
   const power=fresh(pv.power)?watts(pv.power.value):'—';
   const today=fresh(pv.energy_today)?kwh(pv.energy_today.value):'—';
-  text('summary-pv-actual',power);text('solarman-power-detail',power);
-  text('summary-pv-actual-today','Aujourd’hui : '+today);text('solarman-energy-detail',today);
+  text('solarman-power-detail',power);
+  text('solarman-energy-detail',today);
   tag('solarman-tag',fresh(pv.power)?'ok':'bad',fresh(pv.power)?'Mesure disponible':'Indisponible');
-  text('summary-pv-actual-source',fresh(pv.power)?(pv.power.source+' · '+pv.power.entity_id+' · '+new Date(pv.power.at).toLocaleString('fr-CH')):(pv.power?.reason||'Capteur indisponible'));
   const expiries=[pv.power,pv.energy_today].filter(fresh).map(r=>Date.parse(r.valid_until));
   if(expiries.length)solarExpiry=setTimeout(()=>{
-   text('summary-pv-actual','—');text('summary-pv-actual-today','Aujourd’hui : —');
    text('solarman-power-detail','—');text('solarman-energy-detail','—');
    tag('solarman-tag','bad','Données périmées');updateSolarActual();
   },Math.max(10,Math.min(...expiries)-Date.now()+10));
  }catch(error){
   clearTimeout(solarExpiry);
-  text('summary-pv-actual','—');text('summary-pv-actual-today','Aujourd’hui : —');
   text('solarman-power-detail','—');text('solarman-energy-detail','—');
-  tag('solarman-tag','bad','Non vérifiable');text('summary-pv-actual-source','Lecture indisponible');
+  tag('solarman-tag','bad','Non vérifiable');
  }finally{solarBusy=false;}
 }
 updateSolarActual();setInterval(updateSolarActual,30000);

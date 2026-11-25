@@ -36,8 +36,10 @@ class OutputControl:
         self.last_i2c = None
         self.i2c_writes = 0
         self.i2c_avoided = 0
+        self.energy_command = None
 
     def _initialize(self):
+        self.energy_command = None
         start = monotonic_ns()
         try:
             self.dac.initialize()
@@ -63,6 +65,7 @@ class OutputControl:
         try:
             self.dac.set_current(ma)
         except OSError as exc:
+            self.energy_command = None
             self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ERROR'}
             if self.mode == 'AUTO_REEL':
                 # Retain operator intent while no output is trusted. Recovery
@@ -78,6 +81,27 @@ class OutputControl:
             self.error = str(exc)[:160]
             raise
         self.last_i2c = {'start_ns': start, 'end_ns': monotonic_ns(), 'result': 'ACK'}
+        if self.energy_command is None or self.energy_command[0] != ma:
+            self.energy_command = ma, datetime.now(timezone.utc)
+
+    def energy_estimate(self, max_age):
+        with self.lock:
+            state = self.snapshot()
+            dac = state['dac']
+            curve = self.power_curve
+            if (self.energy_command is None or self.error or self.auto_suspended
+                    or self.mode not in ('AUTO_REEL', 'MANUEL_REEL') or not self.enabled
+                    or not dac['ready'] or dac['driver'] != 'gp8600'
+                    or curve is None or not curve.validated
+                    or state['last_ack_age_s'] is None or state['last_ack_age_s'] > max_age):
+                return None
+            ma, changed_at = self.energy_command
+            if ma != self.requested_ma or ma != dac.get('last_acknowledged_ma'):
+                return None
+            watts = curve.power_for_current(ma)
+            if watts is None:
+                return None
+            return watts, changed_at, 'estimated', (self.revision, changed_at)
 
     def _temperature_ok(self, now):
         t = self.temperature
