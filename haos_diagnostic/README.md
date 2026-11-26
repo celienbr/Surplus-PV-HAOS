@@ -1,17 +1,17 @@
-# Surplus PV — Home Assistant OS 1.0.0-alpha.32
+# Surplus PV — Home Assistant OS 1.0.0-alpha.33
 
 Surplus PV utilise les mesures Home Assistant, les prévisions et le planificateur
 confort. Le GP8600 peut commander le chauffe-eau après configuration.
 La puissance affichée est une demande, non une mesure physique.
 
-## Mise à jour depuis Alpha.31
+## Mise à jour depuis Alpha.32
 
 1. Dans Paramètres → Système → Sauvegardes, sauvegarder l'application et ses
    données ; conserver une copie de la sauvegarde hors du Raspberry Pi.
 2. Dans Paramètres → Applications → Boutique, rechercher les mises à jour,
    ouvrir l'application Surplus PV existante et choisir Mettre à jour. Ne pas
    désinstaller l'application : son slug reste `surplus_pv_diagnostic`.
-3. Vérifier la version 1.0.0-alpha.32, les réglages de confort et les historiques.
+3. Vérifier la version 1.0.0-alpha.33, les réglages de confort et les historiques.
    Les bases SQLite et les préférences restent dans /data.
 
 Au démarrage, AUTO / Prévision est sélectionné et la chauffe reprend après
@@ -206,12 +206,15 @@ Les intervalles de plus de 180 secondes, les transitions ambiguës et les
 lacunes sont exclus. Le cumul utilise les secondes écoulées depuis minuit
 en Europe/Zurich et s’arrête au dernier relevé applicable. Le compteur
 Solarman du jour peut fournir la production totale indépendamment.
+En cas de lacune, les barres montrent le détail et le sous-total sur les
+périodes couvertes, avec le total du jour affiché séparément s’il
+est disponible. Les parts inconnues s’affichent sous la forme « — ».
 En Diagnostic, consulter la couverture et la date du dernier relevé.
 
-## Retour arrière vers Alpha.31
+## Retour arrière vers Alpha.32
 
 Demander ARRÊT, arrêter l’application et sauvegarder intégralement /data.
-Restaurer le code Alpha.31 de la même application sans désinstaller celle-ci.
+Restaurer le code Alpha.32 de la même application sans désinstaller celle-ci.
 Conserver les bases et préférences récentes. La table du bilan est additive
 et peut rester dans SQLite. Vérifier ARRÊT, les réglages et l’historique avant
 toute reprise.

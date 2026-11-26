@@ -1855,7 +1855,7 @@ class Diagnostic:
                            'NON_VERIFIABLE' if 'NON_VERIFIABLE' in states or reasons else 'OK')
         health['reasons'] = reasons
         return {
-            "version": "1.0.0-alpha.32",
+            "version": "1.0.0-alpha.33",
             "weather_toggle_token": self.weather_toggle_token,
             "read_only": False,
             "temperature_source": self.temperature_source,

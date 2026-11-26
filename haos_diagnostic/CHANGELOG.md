@@ -1,3 +1,9 @@
+# 1.0.0-alpha.33
+
+- Barre photovoltaïque visible avec une répartition indisponible.
+- Bilan des périodes couvertes conservé après lacune ou redémarrage, avec
+  sous-totaux affichés séparément des cumuls de la journée.
+
 # 1.0.0-alpha.32
 
 - Page Principale à trois barres, température fraîche dans la carte Boiler.
