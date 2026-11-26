@@ -110,7 +110,9 @@
   if (!el('ce-bar')) return;
   const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
   const num = n => n.toLocaleString('fr-CH', {minimumFractionDigits:1, maximumFractionDigits:1});
-  const kwh = n => valid(n) ? num(n)+' kWh' : 'indisponible';
+  const kwh = n => valid(n) ? num(n)+' kWh' : '—';
+  const matchesTotal = (total, ...parts) => [total, ...parts].every(valid) &&
+    Math.abs(parts.reduce((sum, part) => sum + part, 0) - total) < 0.001;
   const when = value => new Date(value).toLocaleString('fr-CH', {timeZone:'Europe/Zurich'});
   const fits = segment => segment.classList.toggle('has-room',
     segment.clientWidth >= segment.firstChild.getBoundingClientRect().width + 8);
@@ -145,39 +147,55 @@
       valid(data.remaining_kwh) ? 'à fournir' : 'Besoin restant indisponible';
     el('ce-reference').textContent = kwh(data.reference_kwh);
     el('ce-provided').textContent = kwh(data.provided_kwh);
-    const split = [data.pv_kwh, data.grid_kwh, data.provided_kwh].every(valid) &&
-      Math.abs(data.pv_kwh + data.grid_kwh - data.provided_kwh) < 0.001;
+    const split = matchesTotal(data.provided_kwh, data.pv_kwh, data.grid_kwh);
+    const partial = !split &&
+      matchesTotal(data.covered_provided_kwh, data.covered_pv_kwh, data.covered_grid_kwh) &&
+      matchesTotal(data.covered_production_kwh, data.covered_other_pv_kwh, data.covered_pv_kwh, data.covered_injection_kwh);
     const parts = split ? [['pv','Surplus PV',data.pv_kwh],['grid','Réseau',data.grid_kwh]] :
-      valid(data.provided_kwh) ? [['unknown','Déjà fournis',data.provided_kwh]] : [];
-    if (valid(data.remaining_kwh)) parts.push(['rest','À fournir',data.remaining_kwh]);
-    const denominator = valid(data.remaining_kwh) ? data.reference_kwh : data.provided_kwh;
+      partial ? [['pv','Surplus PV',data.covered_pv_kwh],['grid','Réseau',data.covered_grid_kwh]] :
+      [['unknown','Déjà fournis',data.provided_kwh], ['pv','Surplus PV',null], ['grid','Réseau',null]];
+    if (!partial && valid(data.remaining_kwh)) parts.push(['rest','À fournir',data.remaining_kwh]);
+    const denominator = partial ? data.covered_provided_kwh :
+      valid(data.remaining_kwh) ? data.reference_kwh : data.provided_kwh;
     draw(el('ce-bar'), el('ce-legend'), parts, denominator);
+    el('ce-status').textContent = partial ? 'Sur les périodes couvertes · ' + kwh(data.covered_provided_kwh) :
+      split ? '' : 'Répartition indisponible';
     el('ce-note').textContent = [
-      'Depuis minuit (Europe/Zurich).', split ? data.balance_source : 'Répartition indisponible.',
-      !split && valid(data.provided_kwh) ? 'Estimation à partir de la puissance demandée.' : null,
-      data.through ? 'Dernier relevé du cumul à ' + when(data.through) + '.' :
-        'Cumul indisponible : historique incomplet ou commande inconnue.'
+      'Depuis minuit (Europe/Zurich).', (split || partial) ? data.balance_source : 'Répartition indisponible.',
+      !split && valid(data.provided_kwh) ? 'Total journalier estimé à partir de la puissance demandée.' : null,
+      data.through ? 'Dernier relevé du cumul à ' + when(data.through) + '.' : 'Cumul journalier indisponible.',
+      data.balance_from ? 'Première période couverte dès le ' + when(data.balance_from) + '.' : null,
+      data.balance_status,
+      data.balance_through ? 'Dernier relevé du bilan à ' + when(data.balance_through) + '.' : null
     ].filter(Boolean).join(' ');
 
     if (!el('pv-home-bar')) return;
     const total = data.production_kwh;
     el('pv-home-total').textContent = valid(total) ? kwh(total) : '—';
-    const complete = split && [total, data.other_pv_kwh, data.injection_kwh].every(valid) &&
-      Math.abs(data.other_pv_kwh + data.pv_kwh + data.injection_kwh - total) < 0.001;
-    const surplus = complete ? data.pv_kwh + data.injection_kwh : 0;
+    const complete = split && matchesTotal(total, data.other_pv_kwh, data.pv_kwh, data.injection_kwh);
+    const showSplit = complete || partial;
+    const barTotal = complete ? total : data.covered_production_kwh;
+    const solar = complete ? data.pv_kwh : data.covered_pv_kwh;
+    const other = complete ? data.other_pv_kwh : data.covered_other_pv_kwh;
+    const injection = complete ? data.injection_kwh : data.covered_injection_kwh;
+    const surplus = showSplit ? solar + injection : null;
     const bracket = el('pv-surplus-track');
-    bracket.hidden = !complete;
-    if (complete) {
-      bracket.style.setProperty('--surplus-start', (total ? data.other_pv_kwh / total * 100 : 100) + '%');
+    bracket.hidden = !showSplit;
+    if (showSplit) {
+      bracket.classList.toggle('no-surplus', surplus === 0);
+      bracket.style.setProperty('--surplus-start', (surplus > 0 ? other / barTotal * 100 : 0) + '%');
       el('pv-surplus').textContent = 'Surplus ' + kwh(surplus);
     }
-    draw(el('pv-home-bar'), el('pv-home-legend'), complete ? [
-      ['house','Autres usages',data.other_pv_kwh], ['pv','Vers le boiler',data.pv_kwh],
-      ['export','Injecté',data.injection_kwh]
-    ] : [], total);
+    draw(el('pv-home-bar'), el('pv-home-legend'), [
+      ['house','Autres usages',showSplit ? other : null], ['pv','Vers le boiler',showSplit ? solar : null],
+      ['export','Injecté',showSplit ? injection : null]
+    ], showSplit ? barTotal : null);
+    el('pv-home-status').textContent = partial ? 'Sur les périodes couvertes · ' + kwh(barTotal) :
+      complete ? '' : 'Répartition indisponible';
     el('pv-home-note').textContent = [
       'Depuis minuit (Europe/Zurich).', data.balance_status || 'Répartition indisponible.',
       valid(data.balance_covered_seconds) ? 'Couverture : ' + Math.floor(data.balance_covered_seconds / 60) + ' min.' : null,
+      data.balance_from ? 'Première période dès ' + when(data.balance_from) + '.' : null,
       data.production_through ? 'Compteur Solarman à ' + when(data.production_through) + '.' : null,
       data.balance_through ? 'Dernier relevé du bilan à ' + when(data.balance_through) + '.' : null
     ].filter(Boolean).join(' ');

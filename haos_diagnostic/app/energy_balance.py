@@ -112,6 +112,7 @@ class DailyEnergyBalance:
         cursor = start
         continuous = True
         estimated = False
+        first = None
         for end_at, start_at, *values in rows:
             left, right = parse_time(start_at), parse_time(end_at)
             clip = max(start, left, cursor)
@@ -119,6 +120,8 @@ class DailyEnergyBalance:
                 continue
             continuous &= clip == cursor
             width = (right - clip).total_seconds()
+            if first is None:
+                first = clip
             result['balance_covered_seconds'] += width
             fraction = (clip - left) / (right - left)
             for index, pair in enumerate(values[:4]):
@@ -128,8 +131,17 @@ class DailyEnergyBalance:
             cursor = right
         if cursor > start:
             result['balance_through'] = cursor.isoformat()
-        if (continuous and latest is not None and cursor == latest[0]
-                and cursor > start and now - cursor <= timedelta(seconds=MAX_GAP)):
+            result['balance_from'] = first.isoformat()
+            other, solar, grid, injection = totals
+            result.update(covered_provided_kwh=solar + grid, covered_pv_kwh=solar,
+                          covered_grid_kwh=grid, covered_production_kwh=other + solar + injection,
+                          covered_other_pv_kwh=other, covered_injection_kwh=injection,
+                          balance_source='Commande DAC confirmée et étalonnée (estimation)' if estimated
+                          else 'Mesure dédiée du boiler')
+        complete = (continuous and latest is not None and cursor == latest[0]
+                    and cursor > start and now - cursor <= timedelta(seconds=MAX_GAP))
+        result['balance_complete'] = complete
+        if complete:
             other, solar, grid, injection = totals
             result.update(balance_status='Couverture complète jusqu’au dernier relevé',
                           balance_source='Commande DAC confirmée et étalonnée (estimation)' if estimated
@@ -137,4 +149,6 @@ class DailyEnergyBalance:
                           provided_kwh=solar + grid, pv_kwh=solar, grid_kwh=grid,
                           production_kwh=other + solar + injection, other_pv_kwh=other,
                           injection_kwh=injection, through=cursor.isoformat())
+        elif cursor > start:
+            result['balance_status'] = 'Données partielles : périodes non couvertes ou dernier relevé ancien'
         return result
